@@ -31,10 +31,23 @@ def write_loop_file(dot_claude, iteration, prompt, total):
     }))
 
 
-def run_claude_loop(cwd, func, stdin_text):
+def read_agent_file(dot_claude):
+    agent_file = dot_claude / "agent.json"
+    if agent_file.exists():
+        return json.loads(agent_file.read_text())
+    return None
+
+
+def write_agent_file(dot_claude, data):
+    (dot_claude / "agent.json").write_text(json.dumps(data))
+
+
+def run_claude_loop(cwd, func, stdin_text, extra_env=None):
     """Run a claude_loop function as a subprocess with piped stdin."""
     env = os.environ.copy()
     env["PYTHONPATH"] = str(PROJECT_ROOT)
+    if extra_env:
+        env.update(extra_env)
     result = subprocess.run(
         [sys.executable, "-c", f"import claude_loop; claude_loop.{func}()"],
         input=stdin_text,
@@ -46,10 +59,12 @@ def run_claude_loop(cwd, func, stdin_text):
     return result
 
 
-def run_main(cwd, args, stdin_text=""):
+def run_main(cwd, args, stdin_text="", extra_env=None):
     """Run claude_loop.main() as a subprocess with given argv and stdin."""
     env = os.environ.copy()
     env["PYTHONPATH"] = str(PROJECT_ROOT)
+    if extra_env:
+        env.update(extra_env)
     argv = ["claude-loop"] + args
     code = f"import sys; sys.argv = {argv!r}; import claude_loop; claude_loop.main()"
     return subprocess.run(
@@ -66,12 +81,42 @@ def run_status(cwd):
     return run_claude_loop(cwd, "status", "")
 
 
-def run_hook(cwd, event):
+def run_hook(cwd, event, extra_env=None):
     """Run claude-loop hook and return parsed JSON output (or None)."""
-    result = run_claude_loop(cwd, "hook", json.dumps(event))
+    result = run_claude_loop(cwd, "hook", json.dumps(event), extra_env=extra_env)
     if result.returncode != 0 and result.stderr:
         raise RuntimeError(f"Hook failed: {result.stderr}")
     stdout = result.stdout.strip()
     if stdout:
         return json.loads(stdout)
     return None
+
+
+def make_stop_event(last_msg=""):
+    return {
+        "hook_event_name": "Stop",
+        "transcript_path": "/dev/null",
+        "last_assistant_message": last_msg,
+    }
+
+
+def make_agent_data(goals="Build something", plan="", history=None,
+                     current_instruction=None, iteration=1, total=10):
+    return {
+        "goals": goals,
+        "plan": plan,
+        "history": history or [],
+        "current_instruction": current_instruction or goals,
+        "iteration": iteration,
+        "total": total,
+    }
+
+
+def make_manager_response(assessment="Good progress", plan="Keep going",
+                           instruction="Do the next thing", done=False):
+    return {
+        "assessment": assessment,
+        "plan": plan,
+        "instruction": instruction,
+        "done": done,
+    }
