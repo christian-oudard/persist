@@ -2,6 +2,7 @@
 
 import json
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -14,6 +15,81 @@ from helpers import (
     run_main, run_start, run_status, run_hook,
     make_stop_event, make_agent_data, make_manager_response,
 )
+
+
+# --- Unit tests: parse_limit ---
+
+class TestParseLimit:
+    def test_iterations(self):
+        total, deadline = claude_loop.parse_limit("5")
+        assert total == 5
+        assert deadline is None
+
+    def test_max_iterations(self):
+        total, deadline = claude_loop.parse_limit("999")
+        assert total == 999
+        assert deadline is None
+
+    def test_hours(self):
+        before = time.time()
+        total, deadline = claude_loop.parse_limit("2h")
+        assert total is None
+        assert before + 7200 <= deadline <= time.time() + 7200
+
+    def test_minutes(self):
+        before = time.time()
+        total, deadline = claude_loop.parse_limit("30m")
+        assert total is None
+        assert before + 1800 <= deadline <= time.time() + 1800
+
+    def test_military_time(self):
+        total, deadline = claude_loop.parse_limit("1400")
+        assert total is None
+        assert deadline is not None
+
+    def test_colon_time(self):
+        total, deadline = claude_loop.parse_limit("14:00")
+        assert total is None
+        assert deadline is not None
+
+    def test_pm(self):
+        total, deadline = claude_loop.parse_limit("2pm")
+        assert total is None
+        assert deadline is not None
+
+    def test_am(self):
+        total, deadline = claude_loop.parse_limit("11am")
+        assert total is None
+        assert deadline is not None
+
+    def test_invalid_military_time(self):
+        import pytest
+        with pytest.raises(ValueError):
+            claude_loop.parse_limit("2500")
+
+    def test_zero_iterations(self):
+        import pytest
+        with pytest.raises(ValueError):
+            claude_loop.parse_limit("0")
+
+
+# --- Unit tests: is_expired ---
+
+class TestIsExpired:
+    def test_iteration_not_expired(self):
+        assert claude_loop.is_expired({"iteration": 3, "total": 5}) is None
+
+    def test_iteration_expired(self):
+        assert claude_loop.is_expired({"iteration": 6, "total": 5}) == 'iterations'
+
+    def test_deadline_not_expired(self):
+        assert claude_loop.is_expired({"deadline": time.time() + 3600}) is None
+
+    def test_deadline_expired(self):
+        assert claude_loop.is_expired({"deadline": time.time() - 1}) == 'deadline'
+
+    def test_no_limits(self):
+        assert claude_loop.is_expired({"iteration": 1}) is None
 
 
 # --- Unit tests: find_keyword ---
@@ -172,11 +248,11 @@ class TestMain:
         proj, dot_claude = make_project(tmp_path)
         result = run_main(proj, [], stdin_text="3 Do stuff")
         assert result.returncode == 0
-        assert read_loop_file(dot_claude) == {"iteration": 1, "prompt": "Do stuff", "total": 3}
+        assert read_loop_file(dot_claude) == {"iteration": 1, "prompt": "Do stuff", "total": 3, "deadline": None}
 
     def test_agent_routes_to_agent_start(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
-        result = run_main(proj, ["agent"], stdin_text="10 Build an API")
+        result = run_main(proj, ["loop-agent"], stdin_text="10 Build an API")
         assert result.returncode == 0
         data = read_agent_file(dot_claude)
         assert data["goals"] == "Build an API"
@@ -202,7 +278,7 @@ class TestStart:
         proj, dot_claude = make_project(tmp_path)
         result = run_start(proj, "5 Fix the bug")
         assert result.returncode == 0
-        assert read_loop_file(dot_claude) == {"iteration": 1, "prompt": "Fix the bug", "total": 5}
+        assert read_loop_file(dot_claude) == {"iteration": 1, "prompt": "Fix the bug", "total": 5, "deadline": None}
 
     def test_multiline_task(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
@@ -258,10 +334,27 @@ class TestStart:
 
     def test_no_overwrite_active_loop(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
-        existing = {"iteration": 3, "prompt": "old task", "total": 5}
-        write_loop_file(dot_claude, 3, "old task", 5)
+        existing = {"iteration": 3, "prompt": "old task", "total": 5, "deadline": None}
+        write_loop_file(dot_claude, 3, "old task", total=5)
         run_start(proj, "10 New task")
         assert read_loop_file(dot_claude) == existing
+
+    def test_time_limit_start(self, tmp_path):
+        proj, dot_claude = make_project(tmp_path)
+        result = run_start(proj, "2h Fix the bug")
+        assert result.returncode == 0
+        data = read_loop_file(dot_claude)
+        assert data["prompt"] == "Fix the bug"
+        assert data["total"] is None
+        assert data["deadline"] is not None
+        assert data["deadline"] > time.time()
+
+    def test_time_limit_status(self, tmp_path):
+        proj, dot_claude = make_project(tmp_path)
+        write_loop_file(dot_claude, 3, "Fix the bug", deadline=time.time() + 3600)
+        result = run_status(proj)
+        assert result.returncode == 0
+        assert "remaining" in result.stdout
 
 
 # --- Integration tests: hook state machine (fixed loop) ---
@@ -283,7 +376,7 @@ class TestHookStateMachine:
         assert decision["decision"] == "block"
         assert "Loop iteration" in decision["reason"]
         assert "Write hello world" in decision["reason"]
-        assert read_loop_file(dot_claude) == {"iteration": 2, "prompt": "Write hello world", "total": 3}
+        assert read_loop_file(dot_claude) == {"iteration": 2, "prompt": "Write hello world", "total": 3, "deadline": None}
 
     def test_normal_continuation(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
@@ -380,7 +473,7 @@ class TestHookStateMachine:
 
         # 1. Start: parse args from stdin, write loop file
         run_start(proj, "5 Create hello.txt")
-        assert read_loop_file(dot_claude) == {"iteration": 1, "prompt": "Create hello.txt", "total": 5}
+        assert read_loop_file(dot_claude) == {"iteration": 1, "prompt": "Create hello.txt", "total": 5, "deadline": None}
 
         # 2. First hook: iteration 2
         d = run_hook(proj, make_stop_event("Starting work."))
@@ -401,13 +494,31 @@ class TestHookStateMachine:
         assert "verified" in d["reason"].lower()
         assert read_loop_file(dot_claude) is None
 
+    def test_deadline_expired_ends_loop(self, tmp_path):
+        proj, dot_claude = make_project(tmp_path)
+        write_loop_file(dot_claude, 2, "Do stuff", deadline=time.time() - 1)
+
+        decision = run_hook(proj, make_stop_event("Still working..."))
+
+        assert "time limit" in decision["reason"].lower()
+        assert read_loop_file(dot_claude) is None
+
+    def test_deadline_not_expired_continues(self, tmp_path):
+        proj, dot_claude = make_project(tmp_path)
+        write_loop_file(dot_claude, 2, "Do stuff", deadline=time.time() + 3600)
+
+        decision = run_hook(proj, make_stop_event("Making progress."))
+
+        assert "Loop iteration" in decision["reason"]
+        assert read_loop_file(dot_claude)["iteration"] == 3
+
 
 # --- Integration tests: agent loop ---
 
 class TestAgentStart:
     def test_basic(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
-        result = run_main(proj, ["agent"], stdin_text="10 Build a REST API")
+        result = run_main(proj, ["loop-agent"], stdin_text="10 Build a REST API")
         assert result.returncode == 0
         data = read_agent_file(dot_claude)
         assert data["goals"] == "Build a REST API"
@@ -418,24 +529,34 @@ class TestAgentStart:
         assert data["current_instruction"] == "Build a REST API"
 
     def test_no_dot_claude(self, tmp_path):
-        result = run_main(tmp_path, ["agent"], stdin_text="5 Do stuff")
+        result = run_main(tmp_path, ["loop-agent"], stdin_text="5 Do stuff")
         assert result.returncode == 1
 
     def test_empty_stdin(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
-        result = run_main(proj, ["agent"], stdin_text="")
+        result = run_main(proj, ["loop-agent"], stdin_text="")
         assert result.returncode == 1
 
     def test_missing_goals(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
-        result = run_main(proj, ["agent"], stdin_text="5")
+        result = run_main(proj, ["loop-agent"], stdin_text="5")
         assert result.returncode == 1
+
+    def test_time_limit_start(self, tmp_path):
+        proj, dot_claude = make_project(tmp_path)
+        result = run_main(proj, ["loop-agent"], stdin_text="2h Build an API")
+        assert result.returncode == 0
+        data = read_agent_file(dot_claude)
+        assert data["goals"] == "Build an API"
+        assert data["total"] is None
+        assert data["deadline"] is not None
+        assert data["deadline"] > time.time()
 
     def test_no_overwrite(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
         original = make_agent_data(goals="Original")
         write_agent_file(dot_claude, original)
-        run_main(proj, ["agent"], stdin_text="10 New goals")
+        run_main(proj, ["loop-agent"], stdin_text="10 New goals")
         assert read_agent_file(dot_claude)["goals"] == "Original"
 
 
@@ -488,6 +609,31 @@ class TestAgentHook:
 
         assert "exhausted" in decision["reason"].lower()
         assert read_agent_file(dot_claude) is None
+
+    def test_deadline_expired_ends_loop(self, tmp_path):
+        proj, dot_claude = make_project(tmp_path)
+        write_agent_file(dot_claude, make_agent_data(
+            iteration=2, total=None, deadline=time.time() - 1,
+        ))
+
+        decision = run_hook(proj, make_stop_event("Still working..."),
+                            extra_env=self._manager_env(make_manager_response()))
+
+        assert "time limit" in decision["reason"].lower()
+        assert read_agent_file(dot_claude) is None
+
+    def test_deadline_not_expired_continues(self, tmp_path):
+        proj, dot_claude = make_project(tmp_path)
+        write_agent_file(dot_claude, make_agent_data(
+            iteration=2, total=None, deadline=time.time() + 3600,
+        ))
+
+        mgr = make_manager_response(instruction="Keep going")
+        decision = run_hook(proj, make_stop_event("Making progress."),
+                            extra_env=self._manager_env(mgr))
+
+        assert "Keep going" in decision["reason"]
+        assert read_agent_file(dot_claude) is not None
 
     def test_history_accumulates(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
@@ -561,7 +707,7 @@ class TestAgentHook:
         proj, dot_claude = make_project(tmp_path)
 
         # Start.
-        run_main(proj, ["agent"], stdin_text="10 Build and test an API")
+        run_main(proj, ["loop-agent"], stdin_text="10 Build and test an API")
         data = read_agent_file(dot_claude)
         assert data["iteration"] == 1
 

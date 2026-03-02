@@ -112,7 +112,7 @@ class ClaudePTY:
 EVENT=$(cat)
 echo "$EVENT" >> {self.hook_log}
 cd {self.project_dir}
-echo "$EVENT" | python3 {PROJECT_ROOT}/claude_loop.py hook
+echo "$EVENT" | PYTHONPATH={PROJECT_ROOT} python3 -m claude_loop hook
 """)
         hook_wrapper.chmod(0o755)
 

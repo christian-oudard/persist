@@ -6,31 +6,54 @@ claude-loop extends Claude Code with persistent coding loops. It re-prompts Clau
 
 Two modes:
 
-1. **Fixed loop** (`/loop N TASK`): Re-injects the same task prompt every iteration. Simple, predictable. Good for focused single-track tasks.
+1. **Fixed loop** (`/loop LIMIT TASK`): Re-injects the same task prompt every iteration. Simple, predictable. Good for focused single-track tasks.
 
-2. **Agent loop** (`/agent N GOALS`): A managing agent reviews the worker's output after each turn and generates a new, specific instruction. The manager maintains a plan, tracks progress, and decides when goals are met. Good for complex multi-step work.
+2. **Agent loop** (`/loop-agent LIMIT GOALS`): A managing agent reviews the worker's output after each turn and generates a new, specific instruction. The manager maintains a plan, tracks progress, and decides when goals are met. Good for complex multi-step work.
+
+## Limits
+
+The LIMIT argument can be an iteration count or a time limit:
+
+- `5` — 5 iterations (max 999)
+- `2h` — 2 hours from now
+- `30m` — 30 minutes from now
+- `2pm` — today at 2 PM (tomorrow if already past)
+- `1400` — military time, today at 14:00 (numbers >= 1000 are always time)
+- `14:00` — same as above
+
+Time-based loops run until the deadline, with no iteration cap. Iteration-based loops have no time limit.
+
+The loop ends when any termination condition is met: iteration limit, deadline, task completion (fixed loop keyword), or manager declaring done (agent loop).
 
 ## Fixed Loop
 
 State: `.claude/loop.json`
 
 ```json
-{"iteration": 2, "prompt": "Fix the parser", "total": 5}
+{"iteration": 2, "prompt": "Fix the parser", "total": 5, "deadline": null}
+```
+
+or (time-limited):
+
+```json
+{"iteration": 2, "prompt": "Fix the parser", "total": null, "deadline": 1709413200}
 ```
 
 Flow:
 ```
 /loop 5 Fix the parser
+  --> parse limit: "5" -> total=5, deadline=null
   --> write loop.json {iteration: 1}
   --> worker gets initial task from slash command text
 
 Stop hook fires:
   --> read loop.json
+  --> check deadline or iteration limit
   --> check last_assistant_message for keywords
   --> TASK_COMPLETE? inject verification prompt
   --> REVIEW_OKAY? delete loop.json, done
   --> REVIEW_INCOMPLETE or no keyword? inject work prompt, increment iteration
-  --> iteration > total? delete loop.json, done
+  --> limit reached? delete loop.json, done
 ```
 
 ## Agent Loop
@@ -45,23 +68,26 @@ State: `.claude/agent.json`
     {"instruction": "Set up Flask project structure", "outcome": "Created app.py with Flask skeleton"}
   ],
   "iteration": 2,
-  "total": 20
+  "total": 20,
+  "deadline": null
 }
 ```
 
 Flow:
 ```
-/agent 20 Build a REST API with tests
+/loop-agent 2h Build a REST API with tests
+  --> parse limit: "2h" -> total=null, deadline=now+7200
   --> write agent.json {iteration: 1, goals, plan: "", history: []}
   --> worker gets goals directly as first instruction
 
 Stop hook fires:
   --> read agent.json
+  --> check deadline or iteration limit
   --> call manager: claude --print --model haiku
       input: goals + plan + history + last_assistant_message
       output: JSON {assessment, plan, instruction, done}
   --> done? delete agent.json, done
-  --> iteration > total? delete agent.json, done
+  --> limit reached? delete agent.json, done
   --> otherwise: update agent.json with new plan/history, inject instruction
 ```
 
@@ -128,7 +154,7 @@ The stop hook checks which state file exists:
 
 ## Commands
 
-- `/loop N TASK` — start fixed loop
-- `/agent N GOALS` — start agent loop
+- `/loop LIMIT TASK` — start fixed loop
+- `/loop-agent LIMIT GOALS` — start agent loop
 - `/loop-status` — show status of either loop type
 - `/loop-stop` — stop either loop type

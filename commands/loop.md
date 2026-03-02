@@ -1,6 +1,6 @@
 ---
 description: "Start a coding loop."
-argument-hint: "NUM_ITERATIONS TASK"
+argument-hint: "LIMIT TASK"
 allowed-tools: ["Bash(claude-loop:*)"]
 hide-from-slash-command-tool: "true"
 ---

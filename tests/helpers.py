@@ -23,11 +23,12 @@ def read_loop_file(dot_claude):
     return None
 
 
-def write_loop_file(dot_claude, iteration, prompt, total):
+def write_loop_file(dot_claude, iteration, prompt, total=None, deadline=None):
     (dot_claude / "loop.json").write_text(json.dumps({
         "iteration": iteration,
         "prompt": prompt,
         "total": total,
+        "deadline": deadline,
     }))
 
 
@@ -101,7 +102,7 @@ def make_stop_event(last_msg=""):
 
 
 def make_agent_data(goals="Build something", plan="", history=None,
-                     current_instruction=None, iteration=1, total=10):
+                     current_instruction=None, iteration=1, total=10, deadline=None):
     return {
         "goals": goals,
         "plan": plan,
@@ -109,6 +110,7 @@ def make_agent_data(goals="Build something", plan="", history=None,
         "current_instruction": current_instruction or goals,
         "iteration": iteration,
         "total": total,
+        "deadline": deadline,
     }
 
 

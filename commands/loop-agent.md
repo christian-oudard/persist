@@ -1,13 +1,13 @@
 ---
 description: "Start a managed agent loop."
-argument-hint: "NUM_ITERATIONS GOALS"
+argument-hint: "LIMIT GOALS"
 allowed-tools: ["Bash(claude-loop:*)"]
 hide-from-slash-command-tool: "true"
 ---
-/agent $ARGUMENTS
+/loop-agent $ARGUMENTS
 
 ```!
-claude-loop agent <<'_LOOP_ARGS_'
+claude-loop loop-agent <<'_LOOP_ARGS_'
 $ARGUMENTS
 _LOOP_ARGS_
 ```
