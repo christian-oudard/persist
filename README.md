@@ -41,9 +41,9 @@ pipx install claude-loop
 
 ## Setup
 
-### 1. Add the slash commands
+### 1. Add the skills
 
-Copy `commands/*.md` to `~/.claude/commands/`.
+Copy each `skills/*/` directory to `~/.claude/skills/`.
 
 ### 2. Add the stop hook
 
