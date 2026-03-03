@@ -32,17 +32,6 @@ def write_loop_file(dot_claude, iteration, prompt, total=None, deadline=None):
     }))
 
 
-def read_agent_file(dot_claude):
-    agent_file = dot_claude / "agent.json"
-    if agent_file.exists():
-        return json.loads(agent_file.read_text())
-    return None
-
-
-def write_agent_file(dot_claude, data):
-    (dot_claude / "agent.json").write_text(json.dumps(data))
-
-
 def run_claude_loop(cwd, func, stdin_text, extra_env=None):
     """Run a claude_loop function as a subprocess with piped stdin."""
     env = os.environ.copy()
@@ -60,12 +49,10 @@ def run_claude_loop(cwd, func, stdin_text, extra_env=None):
     return result
 
 
-def run_main(cwd, args, stdin_text="", extra_env=None):
+def run_main(cwd, args, stdin_text=""):
     """Run claude_loop.main() as a subprocess with given argv and stdin."""
     env = os.environ.copy()
     env["PYTHONPATH"] = str(PROJECT_ROOT)
-    if extra_env:
-        env.update(extra_env)
     argv = ["claude-loop"] + args
     code = f"import sys; sys.argv = {argv!r}; import claude_loop; claude_loop.main()"
     return subprocess.run(
@@ -82,9 +69,9 @@ def run_status(cwd):
     return run_claude_loop(cwd, "status", "")
 
 
-def run_hook(cwd, event, extra_env=None):
+def run_hook(cwd, event):
     """Run claude-loop hook and return parsed JSON output (or None)."""
-    result = run_claude_loop(cwd, "hook", json.dumps(event), extra_env=extra_env)
+    result = run_claude_loop(cwd, "hook", json.dumps(event))
     if result.returncode != 0 and result.stderr:
         raise RuntimeError(f"Hook failed: {result.stderr}")
     stdout = result.stdout.strip()
@@ -98,27 +85,4 @@ def make_stop_event(last_msg=""):
         "hook_event_name": "Stop",
         "transcript_path": "/dev/null",
         "last_assistant_message": last_msg,
-    }
-
-
-def make_agent_data(goals="Build something", plan="", history=None,
-                     current_instruction=None, iteration=1, total=10, deadline=None):
-    return {
-        "goals": goals,
-        "plan": plan,
-        "history": history or [],
-        "current_instruction": current_instruction or goals,
-        "iteration": iteration,
-        "total": total,
-        "deadline": deadline,
-    }
-
-
-def make_manager_response(assessment="Good progress", plan="Keep going",
-                           instruction="Do the next thing", done=False):
-    return {
-        "assessment": assessment,
-        "plan": plan,
-        "instruction": instruction,
-        "done": done,
     }

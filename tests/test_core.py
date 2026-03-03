@@ -11,9 +11,8 @@ import claude_loop
 
 from helpers import (
     make_project, read_loop_file, write_loop_file,
-    read_agent_file, write_agent_file,
     run_main, run_start, run_status, run_hook,
-    make_stop_event, make_agent_data, make_manager_response,
+    make_stop_event,
 )
 
 
@@ -115,85 +114,6 @@ class TestFindKeyword:
         assert claude_loop.find_keyword("TASK_COMPLETE REVIEW_OKAY") == "TASK_COMPLETE"
 
 
-# --- Unit tests: parse_manager_response ---
-
-class TestParseManagerResponse:
-    def test_valid_json(self):
-        text = '{"assessment": "ok", "plan": "p", "instruction": "i", "done": false}'
-        result = claude_loop.parse_manager_response(text)
-        assert result["assessment"] == "ok"
-        assert result["done"] is False
-
-    def test_json_in_code_block(self):
-        text = '```json\n{"assessment": "ok", "plan": "p", "instruction": "i", "done": false}\n```'
-        result = claude_loop.parse_manager_response(text)
-        assert result["assessment"] == "ok"
-
-    def test_json_in_plain_code_block(self):
-        text = '```\n{"assessment": "ok", "plan": "p", "instruction": "i", "done": true}\n```'
-        result = claude_loop.parse_manager_response(text)
-        assert result["done"] is True
-
-    def test_json_with_preamble(self):
-        text = 'Here is my response:\n{"assessment": "ok", "plan": "p", "instruction": "i", "done": false}'
-        result = claude_loop.parse_manager_response(text)
-        assert result["instruction"] == "i"
-
-    def test_empty_string(self):
-        result = claude_loop.parse_manager_response("")
-        assert result["done"] is False
-        assert "instruction" in result
-
-    def test_garbage(self):
-        result = claude_loop.parse_manager_response("not json at all")
-        assert result == claude_loop.manager_fallback()
-
-
-# --- Unit tests: format_history ---
-
-class TestFormatHistory:
-    def test_empty(self):
-        result = claude_loop.format_history([])
-        assert "first iteration" in result.lower()
-
-    def test_one_entry(self):
-        result = claude_loop.format_history([
-            {"instruction": "Set up project", "outcome": "Created files"},
-        ])
-        assert "Turn 1" in result
-        assert "Set up project" in result
-        assert "Created files" in result
-
-    def test_multiple_entries(self):
-        result = claude_loop.format_history([
-            {"instruction": "A", "outcome": "B"},
-            {"instruction": "C", "outcome": "D"},
-        ])
-        assert "Turn 1" in result
-        assert "Turn 2" in result
-
-
-# --- Unit tests: build_manager_prompt ---
-
-class TestBuildManagerPrompt:
-    def test_includes_goals(self):
-        prompt = claude_loop.build_manager_prompt("Build X", "", [], "did stuff")
-        assert "Build X" in prompt
-
-    def test_includes_last_message(self):
-        prompt = claude_loop.build_manager_prompt("g", "", [], "worker output here")
-        assert "worker output here" in prompt
-
-    def test_truncates_long_message(self):
-        long_msg = "x" * 10000
-        prompt = claude_loop.build_manager_prompt("g", "", [], long_msg)
-        assert len(prompt) < 10000 + 2000  # prompt template + truncated message
-
-    def test_empty_plan_shows_first_iteration(self):
-        prompt = claude_loop.build_manager_prompt("g", "", [], "msg")
-        assert "first iteration" in prompt.lower()
-
-
 # --- Integration tests: main() dispatch ---
 
 class TestMain:
@@ -213,21 +133,6 @@ class TestMain:
         assert result.returncode == 0
         assert read_loop_file(dot_claude) is None
 
-    def test_stop_deletes_agent(self, tmp_path):
-        proj, dot_claude = make_project(tmp_path)
-        write_agent_file(dot_claude, make_agent_data())
-        result = run_main(proj, ["stop"])
-        assert result.returncode == 0
-        assert read_agent_file(dot_claude) is None
-
-    def test_stop_deletes_both(self, tmp_path):
-        proj, dot_claude = make_project(tmp_path)
-        write_loop_file(dot_claude, 2, "task", 5)
-        write_agent_file(dot_claude, make_agent_data())
-        result = run_main(proj, ["stop"])
-        assert read_loop_file(dot_claude) is None
-        assert read_agent_file(dot_claude) is None
-
     def test_status_routes(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
         write_loop_file(dot_claude, 1, "my task", 3)
@@ -235,29 +140,11 @@ class TestMain:
         assert result.returncode == 0
         assert "1/3" in result.stdout
 
-    def test_status_agent(self, tmp_path):
-        proj, dot_claude = make_project(tmp_path)
-        write_agent_file(dot_claude, make_agent_data(goals="Build API", iteration=3, total=10))
-        result = run_main(proj, ["status"])
-        assert result.returncode == 0
-        assert "Agent loop" in result.stdout
-        assert "3/10" in result.stdout
-        assert "Build API" in result.stdout
-
     def test_no_args_routes_to_start(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
         result = run_main(proj, [], stdin_text="3 Do stuff")
         assert result.returncode == 0
         assert read_loop_file(dot_claude) == {"iteration": 1, "prompt": "Do stuff", "total": 3, "deadline": None}
-
-    def test_agent_routes_to_agent_start(self, tmp_path):
-        proj, dot_claude = make_project(tmp_path)
-        result = run_main(proj, ["loop-agent"], stdin_text="10 Build an API")
-        assert result.returncode == 0
-        data = read_agent_file(dot_claude)
-        assert data["goals"] == "Build an API"
-        assert data["total"] == 10
-        assert data["iteration"] == 1
 
     def test_hook_routes(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
@@ -520,231 +407,3 @@ class TestHookStateMachine:
 
         assert "Loop iteration" in decision["reason"]
         assert read_loop_file(dot_claude)["iteration"] == 3
-
-
-# --- Integration tests: agent loop ---
-
-class TestAgentStart:
-    def test_basic(self, tmp_path):
-        proj, dot_claude = make_project(tmp_path)
-        result = run_main(proj, ["loop-agent"], stdin_text="10 Build a REST API")
-        assert result.returncode == 0
-        data = read_agent_file(dot_claude)
-        assert data["goals"] == "Build a REST API"
-        assert data["total"] == 10
-        assert data["iteration"] == 1
-        assert data["plan"] == ""
-        assert data["history"] == []
-        assert data["current_instruction"] == "Build a REST API"
-
-    def test_no_project_root(self, tmp_path):
-        result = run_main(tmp_path, ["loop-agent"], stdin_text="5 Do stuff")
-        assert result.returncode == 1
-
-    def test_empty_stdin(self, tmp_path):
-        proj, dot_claude = make_project(tmp_path)
-        result = run_main(proj, ["loop-agent"], stdin_text="")
-        assert result.returncode == 1
-
-    def test_missing_goals(self, tmp_path):
-        proj, dot_claude = make_project(tmp_path)
-        result = run_main(proj, ["loop-agent"], stdin_text="5")
-        assert result.returncode == 1
-
-    def test_time_limit_start(self, tmp_path):
-        proj, dot_claude = make_project(tmp_path)
-        result = run_main(proj, ["loop-agent"], stdin_text="2h Build an API")
-        assert result.returncode == 0
-        data = read_agent_file(dot_claude)
-        assert data["goals"] == "Build an API"
-        assert data["total"] is None
-        assert data["deadline"] is not None
-        assert data["deadline"] > time.time()
-
-    def test_no_overwrite(self, tmp_path):
-        proj, dot_claude = make_project(tmp_path)
-        original = make_agent_data(goals="Original")
-        write_agent_file(dot_claude, original)
-        run_main(proj, ["loop-agent"], stdin_text="10 New goals")
-        assert read_agent_file(dot_claude)["goals"] == "Original"
-
-
-class TestAgentHook:
-    """Test the agent hook using the CLAUDE_LOOP_MANAGER_RESPONSE test seam."""
-
-    def _manager_env(self, response):
-        return {"CLAUDE_LOOP_MANAGER_RESPONSE": json.dumps(response)}
-
-    def test_continues_with_instruction(self, tmp_path):
-        proj, dot_claude = make_project(tmp_path)
-        write_agent_file(dot_claude, make_agent_data(iteration=1, total=10))
-
-        mgr = make_manager_response(
-            assessment="Set up project",
-            plan="1. Done: setup\n2. Next: endpoints",
-            instruction="Implement CRUD endpoints",
-        )
-        decision = run_hook(proj, make_stop_event("Created Flask app."),
-                            extra_env=self._manager_env(mgr))
-
-        assert decision["decision"] == "block"
-        assert "Implement CRUD endpoints" in decision["reason"]
-        assert "Managed iteration 2" in decision["reason"]
-
-        data = read_agent_file(dot_claude)
-        assert data["iteration"] == 2
-        assert data["current_instruction"] == "Implement CRUD endpoints"
-        assert data["plan"] == "1. Done: setup\n2. Next: endpoints"
-        assert len(data["history"]) == 1
-        assert data["history"][0]["outcome"] == "Set up project"
-
-    def test_done_ends_loop(self, tmp_path):
-        proj, dot_claude = make_project(tmp_path)
-        write_agent_file(dot_claude, make_agent_data(iteration=3, total=10))
-
-        mgr = make_manager_response(done=True)
-        decision = run_hook(proj, make_stop_event("All done!"),
-                            extra_env=self._manager_env(mgr))
-
-        assert "goals met" in decision["reason"].lower()
-        assert read_agent_file(dot_claude) is None
-
-    def test_iterations_exhausted(self, tmp_path):
-        proj, dot_claude = make_project(tmp_path)
-        write_agent_file(dot_claude, make_agent_data(iteration=5, total=5))
-
-        decision = run_hook(proj, make_stop_event("Still working..."),
-                            extra_env=self._manager_env(make_manager_response()))
-
-        assert "exhausted" in decision["reason"].lower()
-        assert read_agent_file(dot_claude) is None
-
-    def test_deadline_expired_ends_loop(self, tmp_path):
-        proj, dot_claude = make_project(tmp_path)
-        write_agent_file(dot_claude, make_agent_data(
-            iteration=2, total=None, deadline=time.time() - 1,
-        ))
-
-        decision = run_hook(proj, make_stop_event("Still working..."),
-                            extra_env=self._manager_env(make_manager_response()))
-
-        assert "time limit" in decision["reason"].lower()
-        assert read_agent_file(dot_claude) is None
-
-    def test_deadline_not_expired_continues(self, tmp_path):
-        proj, dot_claude = make_project(tmp_path)
-        write_agent_file(dot_claude, make_agent_data(
-            iteration=2, total=None, deadline=time.time() + 3600,
-        ))
-
-        mgr = make_manager_response(instruction="Keep going")
-        decision = run_hook(proj, make_stop_event("Making progress."),
-                            extra_env=self._manager_env(mgr))
-
-        assert "Keep going" in decision["reason"]
-        assert read_agent_file(dot_claude) is not None
-
-    def test_history_accumulates(self, tmp_path):
-        proj, dot_claude = make_project(tmp_path)
-        existing_history = [
-            {"instruction": "Set up project", "outcome": "Done"},
-        ]
-        write_agent_file(dot_claude, make_agent_data(
-            iteration=2, total=10,
-            history=existing_history,
-            current_instruction="Write endpoints",
-        ))
-
-        mgr = make_manager_response(
-            assessment="Endpoints written",
-            instruction="Write tests",
-        )
-        run_hook(proj, make_stop_event("Wrote all endpoints."),
-                 extra_env=self._manager_env(mgr))
-
-        data = read_agent_file(dot_claude)
-        assert len(data["history"]) == 2
-        assert data["history"][1]["instruction"] == "Write endpoints"
-        assert data["history"][1]["outcome"] == "Endpoints written"
-
-    def test_agent_takes_priority_over_loop(self, tmp_path):
-        """When both agent.json and loop.json exist, agent wins."""
-        proj, dot_claude = make_project(tmp_path)
-        write_loop_file(dot_claude, 1, "loop task", 5)
-        write_agent_file(dot_claude, make_agent_data(iteration=1, total=10))
-
-        mgr = make_manager_response(instruction="Agent instruction")
-        decision = run_hook(proj, make_stop_event("output"),
-                            extra_env=self._manager_env(mgr))
-
-        assert "Agent instruction" in decision["reason"]
-        # Loop file should be untouched.
-        assert read_loop_file(dot_claude)["iteration"] == 1
-
-    def test_no_agent_file_falls_to_loop(self, tmp_path):
-        proj, dot_claude = make_project(tmp_path)
-        write_loop_file(dot_claude, 1, "loop task", 5)
-
-        decision = run_hook(proj, make_stop_event("working"))
-
-        assert "Loop iteration" in decision["reason"]
-
-    def test_goals_in_worker_prompt(self, tmp_path):
-        proj, dot_claude = make_project(tmp_path)
-        write_agent_file(dot_claude, make_agent_data(
-            goals="Build a REST API", iteration=1, total=10,
-        ))
-
-        mgr = make_manager_response(instruction="Set up Flask")
-        decision = run_hook(proj, make_stop_event("ready"),
-                            extra_env=self._manager_env(mgr))
-
-        assert "Build a REST API" in decision["reason"]
-        assert "Set up Flask" in decision["reason"]
-
-    def test_non_stop_event_ignored(self, tmp_path):
-        proj, dot_claude = make_project(tmp_path)
-        write_agent_file(dot_claude, make_agent_data(iteration=1, total=10))
-
-        event = {"hook_event_name": "NotStop", "last_assistant_message": ""}
-        decision = run_hook(proj, event,
-                            extra_env=self._manager_env(make_manager_response()))
-        assert decision is None
-
-    def test_full_lifecycle(self, tmp_path):
-        """Full agent lifecycle: start -> hook -> hook -> done."""
-        proj, dot_claude = make_project(tmp_path)
-
-        # Start.
-        run_main(proj, ["loop-agent"], stdin_text="10 Build and test an API")
-        data = read_agent_file(dot_claude)
-        assert data["iteration"] == 1
-
-        # Iteration 1 -> 2: manager assigns first real task.
-        mgr1 = make_manager_response(
-            assessment="Understood the goals",
-            plan="1. Setup 2. Endpoints 3. Tests",
-            instruction="Create project structure with Flask",
-        )
-        d = run_hook(proj, make_stop_event("I'll build an API."),
-                     extra_env=self._manager_env(mgr1))
-        assert "Create project structure" in d["reason"]
-        assert read_agent_file(dot_claude)["iteration"] == 2
-
-        # Iteration 2 -> 3: manager assigns next task.
-        mgr2 = make_manager_response(
-            assessment="Project structure created",
-            plan="1. Done 2. Endpoints 3. Tests",
-            instruction="Implement CRUD endpoints",
-        )
-        d = run_hook(proj, make_stop_event("Created Flask app with models."),
-                     extra_env=self._manager_env(mgr2))
-        assert "CRUD endpoints" in d["reason"]
-        assert read_agent_file(dot_claude)["iteration"] == 3
-
-        # Iteration 3 -> done: manager says done.
-        mgr3 = make_manager_response(done=True, assessment="All complete")
-        d = run_hook(proj, make_stop_event("Tests pass."),
-                     extra_env=self._manager_env(mgr3))
-        assert "goals met" in d["reason"].lower()
-        assert read_agent_file(dot_claude) is None
