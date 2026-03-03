@@ -8,9 +8,8 @@ from pathlib import Path
 
 
 def dot_claude_dir():
-    p = Path.cwd()
     project_root = None
-    for p in [p, *p.parents]:
+    for p in [Path.cwd(), *Path.cwd().parents]:
         if p == Path.home():
             break
         dot_claude = p / '.claude'

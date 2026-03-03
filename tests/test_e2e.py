@@ -92,9 +92,8 @@ class ClaudePTY:
         dot_claude = self.project_dir / ".claude"
         dot_claude.mkdir()
 
-        commands_dst = dot_claude / "commands"
-        commands_dst.mkdir()
-        shutil.copy(PROJECT_ROOT / "commands" / "loop.md", commands_dst / "loop.md")
+        skills_dst = dot_claude / "skills"
+        shutil.copytree(PROJECT_ROOT / "skills", skills_dst)
 
         self.hook_log = tmp_path / "hook_calls.jsonl"
         self.loop_json = dot_claude / "loop.json"
