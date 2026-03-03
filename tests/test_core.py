@@ -300,11 +300,20 @@ class TestStart:
         run_start(proj, """2 Fix the "parser" and it's 'edge cases'""")
         assert read_loop_file(dot_claude)["prompt"] == """Fix the "parser" and it's 'edge cases'"""
 
-    def test_no_dot_claude_dir(self, tmp_path):
-        # No .claude directory — should fail.
+    def test_no_project_root(self, tmp_path):
+        # No .claude and no .git — should fail.
         result = run_start(tmp_path, "3 Do stuff")
         assert result.returncode == 1
         assert "Not in a project" in result.stderr
+
+    def test_auto_creates_dot_claude(self, tmp_path):
+        # .git exists but no .claude — should auto-create .claude and print message.
+        (tmp_path / ".git").mkdir()
+        result = run_start(tmp_path, "3 Do stuff")
+        assert result.returncode == 0
+        assert (tmp_path / ".claude").is_dir()
+        assert "created" in result.stderr.lower()
+        assert read_loop_file(tmp_path / ".claude") is not None
 
     def test_empty_stdin(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
@@ -528,7 +537,7 @@ class TestAgentStart:
         assert data["history"] == []
         assert data["current_instruction"] == "Build a REST API"
 
-    def test_no_dot_claude(self, tmp_path):
+    def test_no_project_root(self, tmp_path):
         result = run_main(tmp_path, ["loop-agent"], stdin_text="5 Do stuff")
         assert result.returncode == 1
 

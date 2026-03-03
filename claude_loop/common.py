@@ -1,6 +1,7 @@
 """Shared utilities for claude-loop."""
 
 import re
+import sys
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -8,12 +9,20 @@ from pathlib import Path
 
 def dot_claude_dir():
     p = Path.cwd()
+    project_root = None
     for p in [p, *p.parents]:
         if p == Path.home():
             break
         dot_claude = p / '.claude'
-        if dot_claude.exists():
+        if dot_claude.is_dir():
             return dot_claude
+        if project_root is None and (p / '.git').exists():
+            project_root = p
+    if project_root:
+        dot_claude = project_root / '.claude'
+        dot_claude.mkdir()
+        print(f"Found .git in {project_root}, created {dot_claude}/", file=sys.stderr)
+        return dot_claude
     return None
 
 
