@@ -201,7 +201,8 @@ def call_manager(goals, plan, history, last_message):
 
     prompt = build_manager_prompt(goals, plan, history, last_message)
 
-    env = {k: v for k, v in os.environ.items() if k != 'CLAUDECODE'}
+    strip = {'CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT'}
+    env = {k: v for k, v in os.environ.items() if k not in strip}
     try:
         result = subprocess.run(
             ['claude', '--print', '--model', 'haiku',
@@ -212,9 +213,16 @@ def call_manager(goals, plan, history, last_message):
             env=env,
             timeout=60,
         )
-        return parse_manager_response(result.stdout)
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as e:
+        print(f"claude-loop: manager call failed: {e}", file=sys.stderr)
         return manager_fallback()
+
+    if result.returncode != 0:
+        msg = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
+        print(f"claude-loop: manager call failed: {msg}", file=sys.stderr)
+        return manager_fallback()
+
+    return parse_manager_response(result.stdout)
 
 
 def build_manager_prompt(goals, plan, history, last_message):
