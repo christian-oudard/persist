@@ -1,4 +1,4 @@
-"""End-to-end tests for claude-loop using PTY-driven claude --model haiku.
+"""End-to-end tests for persist using PTY-driven claude --model haiku.
 
 Spawns real Claude Code instances in pseudo-terminals, types commands,
 sends Escape to interrupt, and verifies hook behavior via log files.
@@ -96,7 +96,7 @@ class ClaudePTY:
         shutil.copytree(PROJECT_ROOT / "skills", skills_dst)
 
         self.hook_log = tmp_path / "hook_calls.jsonl"
-        self.loop_json = dot_claude / "loop.json"
+        self.state_json = dot_claude / "persist.json"
         self._setup_hook(tmp_path)
 
         self.pid = None
@@ -111,7 +111,7 @@ class ClaudePTY:
 EVENT=$(cat)
 echo "$EVENT" >> {self.hook_log}
 cd {self.project_dir}
-echo "$EVENT" | PYTHONPATH={PROJECT_ROOT} python3 -m claude_loop hook
+echo "$EVENT" | PYTHONPATH={PROJECT_ROOT} python3 -m persist hook
 """)
         hook_wrapper.chmod(0o755)
 
@@ -194,12 +194,12 @@ echo "$EVENT" | PYTHONPATH={PROJECT_ROOT} python3 -m claude_loop hook
             pty_drain(self.fd, timeout=0.5)
         return False
 
-    def wait_for_loop_end(self, timeout=180):
-        """Wait until loop.json is deleted (loop finished)."""
+    def wait_for_session_end(self, timeout=180):
+        """Wait until persist.json is deleted (session finished)."""
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             pty_drain(self.fd, timeout=0.5)
-            if not self.loop_file_exists() and self.count_hook_calls() >= 1:
+            if not self.state_file_exists() and self.count_hook_calls() >= 1:
                 return True
         return False
 
@@ -231,8 +231,8 @@ echo "$EVENT" | PYTHONPATH={PROJECT_ROOT} python3 -m claude_loop hook
                 events.append(json.loads(line))
         return events
 
-    def loop_file_exists(self):
-        return self.loop_json.exists()
+    def state_file_exists(self):
+        return self.state_json.exists()
 
     def cleanup(self):
         """Kill the claude process."""
@@ -279,12 +279,12 @@ def claude(tmp_path):
 # Designed for haiku: extremely explicit, no ambiguity, no state tracking needed.
 
 COUNTING_TASK = (
-    "Say one number per loop, counting upward. "
+    "Say one number per iteration, counting upward. "
     "Use number words, not digits. This task is never complete."
 )
 
 STOP_AT_FIVE_TASK = (
-    "Say one number per loop, counting upward. Use number words, not digits. "
+    "Say one number per iteration, counting upward. Use number words, not digits. "
     "The task is complete once you have said the number five."
 )
 
@@ -292,13 +292,13 @@ STOP_AT_FIVE_TASK = (
 # --- Tests ---
 
 class TestIterationExhaustion:
-    """Test: /loop 3 <counting task>
+    """Test: /persist 3 <counting task>
 
-    The loop should run for 3 iterations and terminate when exhausted.
+    The session should run for 3 iterations and terminate when exhausted.
     """
 
     def test_runs_three_iterations(self, claude):
-        claude.submit(f"/loop 3 {COUNTING_TASK}")
+        claude.submit(f"/persist 3 {COUNTING_TASK}")
 
         got_enough = claude.wait_for_hook_calls(3, timeout=120)
         hooks = claude.parse_hook_log()
@@ -308,17 +308,17 @@ class TestIterationExhaustion:
             f"Messages: {[h.get('last_assistant_message', '')[:40] for h in hooks]}"
         )
 
-        # Wait for the loop to clean up
-        claude.wait_for_loop_end(timeout=30)
+        # Wait for the session to clean up
+        claude.wait_for_session_end(timeout=30)
 
-        assert not claude.loop_file_exists(), \
-            "Loop file should be deleted when iterations exhausted"
+        assert not claude.state_file_exists(), \
+            "State file should be deleted when iterations exhausted"
 
     def test_hook_receives_stop_events(self, claude):
-        claude.submit(f"/loop 2 {COUNTING_TASK}")
+        claude.submit(f"/persist 2 {COUNTING_TASK}")
 
         claude.wait_for_hook_calls(2, timeout=120)
-        claude.wait_for_loop_end(timeout=30)
+        claude.wait_for_session_end(timeout=30)
 
         hooks = claude.parse_hook_log()
         for hook in hooks:
@@ -328,16 +328,16 @@ class TestIterationExhaustion:
 
 
 class TestEarlyCompletion:
-    """Test: /loop 10 <task that ends after five>
+    """Test: /persist 10 <task that ends after five>
 
     The agent should count to five, say TASK_COMPLETE, pass verification,
-    and end the loop well before 10 iterations.
+    and end the session well before 10 iterations.
     """
 
     def test_completes_before_iteration_limit(self, claude):
-        claude.submit(f"/loop 10 {STOP_AT_FIVE_TASK}")
+        claude.submit(f"/persist 10 {STOP_AT_FIVE_TASK}")
 
-        claude.wait_for_loop_end(timeout=180)
+        claude.wait_for_session_end(timeout=180)
 
         hooks = claude.parse_hook_log()
         hook_msgs = [h.get("last_assistant_message", "") for h in hooks]
@@ -346,13 +346,13 @@ class TestEarlyCompletion:
             f"Expected early completion, got {len(hooks)} hooks. "
             f"Messages: {[m[:40] for m in hook_msgs]}"
         )
-        assert not claude.loop_file_exists(), \
-            "Loop file should be deleted after completion"
+        assert not claude.state_file_exists(), \
+            "State file should be deleted after completion"
 
     def test_task_complete_detected(self, claude):
-        claude.submit(f"/loop 10 {STOP_AT_FIVE_TASK}")
+        claude.submit(f"/persist 10 {STOP_AT_FIVE_TASK}")
 
-        claude.wait_for_loop_end(timeout=180)
+        claude.wait_for_session_end(timeout=180)
 
         hooks = claude.parse_hook_log()
         hook_msgs = [h.get("last_assistant_message", "") for h in hooks]
@@ -364,16 +364,16 @@ class TestEarlyCompletion:
         )
 
 
-class TestLoopStop:
-    """Test: /loop stop sent mid-loop via Escape + command.
+class TestPersistStop:
+    """Test: /persist-stop sent mid-session via Escape + command.
 
-    Start a 10-iteration loop, wait for 2+ iterations, send Escape to
-    interrupt the current turn, then type /loop stop. Verifies the full
+    Start a 10-iteration session, wait for 2+ iterations, send Escape to
+    interrupt the current turn, then type /persist-stop. Verifies the full
     stop path through the real TUI.
     """
 
-    def test_stop_terminates_loop(self, claude):
-        claude.submit(f"/loop 10 {COUNTING_TASK}")
+    def test_stop_terminates_session(self, claude):
+        claude.submit(f"/persist 10 {COUNTING_TASK}")
 
         # Wait for at least 2 hook calls (2 iterations done)
         got_enough = claude.wait_for_hook_calls(2, timeout=120)
@@ -386,16 +386,16 @@ class TestLoopStop:
         ready = claude.wait_for_input_ready(timeout=15)
         assert ready, "Prompt did not reappear after Escape"
 
-        # Submit /loop stop
-        claude.submit("/loop stop")
+        # Submit /persist-stop
+        claude.submit("/persist-stop")
 
-        # Wait for loop file to be deleted
-        claude.wait_for_loop_end(timeout=30)
+        # Wait for state file to be deleted
+        claude.wait_for_session_end(timeout=30)
 
         hooks = claude.parse_hook_log()
         assert len(hooks) < 10, (
             f"Expected early stop, got {len(hooks)} hooks. "
             f"Messages: {[h.get('last_assistant_message', '')[:40] for h in hooks]}"
         )
-        assert not claude.loop_file_exists(), \
-            "Loop file should be deleted by /loop stop"
+        assert not claude.state_file_exists(), \
+            "State file should be deleted by /persist-stop"

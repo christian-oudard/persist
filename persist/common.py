@@ -1,4 +1,4 @@
-"""Shared utilities for claude-loop."""
+"""Shared utilities for persist."""
 
 import re
 import sys
@@ -80,7 +80,7 @@ def _next_occurrence(hour, minute):
 
 
 def is_expired(data):
-    """Check if a loop's limit has been reached."""
+    """Check if a session's limit has been reached."""
     deadline = data.get('deadline')
     if deadline and time.time() >= deadline:
         return 'deadline'

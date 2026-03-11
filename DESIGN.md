@@ -1,10 +1,10 @@
-# claude-loop Design
+# persist Design
 
 ## Purpose
 
-claude-loop extends Claude Code with persistent coding loops. It re-prompts Claude after each turn via a stop hook, keeping work going across multiple iterations without manual intervention.
+persist extends Claude Code with persistent coding sessions. It re-prompts Claude after each turn via a stop hook, keeping work going across multiple iterations without manual intervention.
 
-`/loop LIMIT TASK` re-injects the same task prompt every iteration. Simple, predictable. Good for focused single-track tasks.
+`/persist LIMIT TASK` re-injects the same task prompt every iteration. Simple, predictable. Good for focused single-track tasks.
 
 ## Limits
 
@@ -17,13 +17,13 @@ The LIMIT argument can be an iteration count or a time limit:
 - `1400` — military time, today at 14:00 (numbers >= 1000 are always time)
 - `14:00` — same as above
 
-Time-based loops run until the deadline, with no iteration cap. Iteration-based loops have no time limit.
+Time-based sessions run until the deadline, with no iteration cap. Iteration-based sessions have no time limit.
 
-The loop ends when any termination condition is met: iteration limit, deadline, or task completion keyword.
+The session ends when any termination condition is met: iteration limit, deadline, or task completion keyword.
 
-## Fixed Loop
+## Fixed Session
 
-State: `.claude/loop.json`
+State: `.claude/persist.json`
 
 ```json
 {"iteration": 2, "prompt": "Fix the parser", "total": 5, "deadline": null}
@@ -37,27 +37,27 @@ or (time-limited):
 
 Flow:
 ```
-/loop 5 Fix the parser
+/persist 5 Fix the parser
   --> parse limit: "5" -> total=5, deadline=null
-  --> write loop.json {iteration: 1}
+  --> write persist.json {iteration: 1}
   --> worker gets initial task from slash command text
 
 Stop hook fires:
-  --> read loop.json
+  --> read persist.json
   --> check deadline or iteration limit
   --> check last_assistant_message for keywords
   --> TASK_COMPLETE? inject verification prompt
-  --> REVIEW_OKAY? delete loop.json, done
+  --> REVIEW_OKAY? delete persist.json, done
   --> REVIEW_INCOMPLETE or no keyword? inject work prompt, increment iteration
-  --> limit reached? delete loop.json, done
+  --> limit reached? delete persist.json, done
 ```
 
 ## Hook Routing
 
-The stop hook checks if `loop.json` exists. If not, it does nothing.
+The stop hook checks if `persist.json` exists. If not, it does nothing.
 
 ## Commands
 
-- `/loop LIMIT TASK` — start fixed loop
-- `/loop-status` — show status
-- `/loop-stop` — stop a running loop
+- `/persist LIMIT TASK` — start session
+- `/persist-status` — show status
+- `/persist-stop` — stop a running session

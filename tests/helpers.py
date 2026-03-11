@@ -1,4 +1,4 @@
-"""Shared test helpers for claude_loop."""
+"""Shared test helpers for persist."""
 
 import json
 import os
@@ -16,15 +16,15 @@ def make_project(tmp_path):
     return tmp_path, dot_claude
 
 
-def read_loop_file(dot_claude):
-    loop_file = dot_claude / "loop.json"
-    if loop_file.exists():
-        return json.loads(loop_file.read_text())
+def read_state_file(dot_claude):
+    state_file = dot_claude / "persist.json"
+    if state_file.exists():
+        return json.loads(state_file.read_text())
     return None
 
 
-def write_loop_file(dot_claude, iteration, prompt, total=None, deadline=None):
-    (dot_claude / "loop.json").write_text(json.dumps({
+def write_state_file(dot_claude, iteration, prompt, total=None, deadline=None):
+    (dot_claude / "persist.json").write_text(json.dumps({
         "iteration": iteration,
         "prompt": prompt,
         "total": total,
@@ -32,14 +32,14 @@ def write_loop_file(dot_claude, iteration, prompt, total=None, deadline=None):
     }))
 
 
-def run_claude_loop(cwd, func, stdin_text, extra_env=None):
-    """Run a claude_loop function as a subprocess with piped stdin."""
+def run_persist(cwd, func, stdin_text, extra_env=None):
+    """Run a persist function as a subprocess with piped stdin."""
     env = os.environ.copy()
     env["PYTHONPATH"] = str(PROJECT_ROOT)
     if extra_env:
         env.update(extra_env)
     result = subprocess.run(
-        [sys.executable, "-c", f"import claude_loop; claude_loop.{func}()"],
+        [sys.executable, "-c", f"import persist; persist.{func}()"],
         input=stdin_text,
         capture_output=True,
         text=True,
@@ -50,11 +50,11 @@ def run_claude_loop(cwd, func, stdin_text, extra_env=None):
 
 
 def run_main(cwd, args, stdin_text=""):
-    """Run claude_loop.main() as a subprocess with given argv and stdin."""
+    """Run persist.main() as a subprocess with given argv and stdin."""
     env = os.environ.copy()
     env["PYTHONPATH"] = str(PROJECT_ROOT)
-    argv = ["claude-loop"] + args
-    code = f"import sys; sys.argv = {argv!r}; import claude_loop; claude_loop.main()"
+    argv = ["persist"] + args
+    code = f"import sys; sys.argv = {argv!r}; import persist; persist.main()"
     return subprocess.run(
         [sys.executable, "-c", code],
         input=stdin_text, capture_output=True, text=True, cwd=str(cwd), env=env,
@@ -62,16 +62,16 @@ def run_main(cwd, args, stdin_text=""):
 
 
 def run_start(cwd, stdin_text):
-    return run_claude_loop(cwd, "start", stdin_text)
+    return run_persist(cwd, "start", stdin_text)
 
 
 def run_status(cwd):
-    return run_claude_loop(cwd, "status", "")
+    return run_persist(cwd, "status", "")
 
 
 def run_hook(cwd, event):
-    """Run claude-loop hook and return parsed JSON output (or None)."""
-    result = run_claude_loop(cwd, "hook", json.dumps(event))
+    """Run persist hook and return parsed JSON output (or None)."""
+    result = run_persist(cwd, "hook", json.dumps(event))
     if result.returncode != 0 and result.stderr:
         raise RuntimeError(f"Hook failed: {result.stderr}")
     stdout = result.stdout.strip()

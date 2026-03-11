@@ -1,6 +1,6 @@
-# claude-loop
+# persist
 
-A coding loop for Claude Code. Re-injects the same task each iteration using a stop hook, keeping work going across multiple turns without manual intervention.
+Persistent coding sessions for Claude Code. Re-injects the same task each iteration using a stop hook, keeping work going across multiple turns without manual intervention.
 
 ```
 Work iteration  -> TASK_COMPLETE      -> verification prompt
@@ -13,12 +13,12 @@ Any iteration   -> limit reached      -> done
 
 With uv:
 ```bash
-uv tool install claude-loop
+uv tool install persist
 ```
 
 Or with pipx:
 ```bash
-pipx install claude-loop
+pipx install persist
 ```
 
 ## Setup
@@ -40,7 +40,7 @@ Add this to your `~/.claude/settings.json` under `"hooks"`:
         "hooks": [
           {
             "type": "command",
-            "command": "claude-loop hook"
+            "command": "persist hook"
           }
         ]
       }
@@ -52,21 +52,21 @@ Add this to your `~/.claude/settings.json` under `"hooks"`:
 ## Usage
 
 ```
-/loop 10 Implement a function that solves the traveling salesman problem
-/loop 2h Refactor the database layer
-/loop 2pm Ship the feature branch
+/persist 10 Implement a function that solves the traveling salesman problem
+/persist 2h Refactor the database layer
+/persist 2pm Ship the feature branch
 ```
 
 The first argument is a limit -- either an iteration count (max 999) or a time limit (`2h`, `30m`, `2pm`, `1400`, `14:00`). Numbers >= 1000 are interpreted as military time. The rest is the task.
 
 To check status:
 ```
-/loop-status
+/persist-status
 ```
 
-To cancel a running loop:
+To cancel a running session:
 ```
-/loop-stop
+/persist-stop
 ```
 
-Or run `claude-loop stop` from a terminal in the project directory.
+Or run `persist stop` from a terminal in the project directory.
