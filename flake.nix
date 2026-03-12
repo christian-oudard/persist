@@ -27,5 +27,17 @@
         persist-status = ./skills/persist-status;
         persist-stop = ./skills/persist-stop;
       };
+
+      # Ready-made nix-claude plugin config
+      plugin = eachSystem (system:
+        let pkg = self.packages.${system}.default; in {
+          description = "Persistent coding sessions for Claude Code";
+          skills = builtins.attrValues self.skills;
+          package = pkg;
+          settings.hooks.Stop = [{
+            matcher = "";
+            hooks = [{ type = "command"; command = "${pkg}/bin/persist hook"; }];
+          }];
+        });
     };
 }
