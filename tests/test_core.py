@@ -446,13 +446,14 @@ class TestSessionIsolation:
         run_start(proj, "5 task")
         assert read_state_file(dot_claude)["session_id"] is None
 
-    def test_unclaimed_session_rejects_hooks(self, tmp_path):
-        """A session with no session_id rejects all hooks."""
+    def test_unclaimed_session_accepts_hooks(self, tmp_path):
+        """A session with no session_id accepts hooks from any session."""
         proj, dot_claude = make_project(tmp_path)
         write_state_file(dot_claude, 1, "task", 5)
         decision = run_hook(proj, make_stop_event("progress", session_id="session-A"))
-        assert decision is None
-        assert read_state_file(dot_claude)["iteration"] == 1
+        assert decision is not None
+        assert decision["decision"] == "block"
+        assert read_state_file(dot_claude)["iteration"] == 2
 
     def test_other_session_ignored(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)

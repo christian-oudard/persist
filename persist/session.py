@@ -1,4 +1,4 @@
-"""Fixed persist session — re-injects the same task each iteration."""
+"""Persist session — re-injects the same task each iteration."""
 
 import json
 import sys
@@ -106,8 +106,9 @@ def start():
     total, deadline = parse_limit(parts[0])
     prompt = parts[1]
     session_id = _read_session_id()
-    # The initial Claude response (from the slash command text) is iteration 1.
     write_state_file(1, prompt, total=total, deadline=deadline, session_id=session_id)
+    # Printed to stdout so the skill expansion includes it as context for Claude.
+    print(WORK_PROMPT.format(prompt=prompt, iteration=1))
 
 
 def stop_hook(state, event):

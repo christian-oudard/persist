@@ -11,7 +11,7 @@ import json
 import sys
 
 from .common import parse_limit, is_expired, format_remaining  # noqa: F401
-from .fixed import (  # noqa: F401
+from .session import (  # noqa: F401
     start, stop_hook, find_keyword,
     read_state_file, write_state_file, delete_state_file,
     state_file_path,
@@ -61,7 +61,7 @@ def hook():
     event_session_id = event.get('session_id')
     state_session_id = state.get('session_id')
 
-    if state_session_id != event_session_id:
+    if state_session_id is not None and state_session_id != event_session_id:
         return
 
     stop_hook(state, event)

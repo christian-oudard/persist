@@ -21,7 +21,7 @@ Time-based sessions run until the deadline, with no iteration cap. Iteration-bas
 
 The session ends when any termination condition is met: iteration limit, deadline, or task completion keyword.
 
-## Fixed Session
+## Session
 
 State: `.claude/persist.json`
 
