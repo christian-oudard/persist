@@ -34,10 +34,6 @@
           description = "Persistent coding sessions for Claude Code";
           skills = builtins.attrValues self.skills;
           package = pkg;
-          settings.hooks.UserPromptSubmit = [{
-            matcher = "";
-            hooks = [{ type = "command"; command = "${pkg}/bin/persist prompt-hook"; }];
-          }];
           settings.hooks.Stop = [{
             matcher = "";
             hooks = [{ type = "command"; command = "${pkg}/bin/persist hook"; }];

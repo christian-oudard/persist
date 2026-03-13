@@ -10,9 +10,10 @@ sys.path.insert(0, str(Path(__file__).parent))
 import persist
 
 from helpers import (
-    make_project, read_state_file, write_state_file, write_session_file,
+    make_project, read_state_file, read_session, read_pending,
+    write_session, write_pending,
     run_main, run_start, run_status, run_hook, run_persist,
-    make_stop_event, make_prompt_event,
+    make_stop_event,
 )
 
 
@@ -116,86 +117,80 @@ class TestFindKeyword:
 # --- Integration tests: main() dispatch ---
 
 class TestMain:
-    def test_stop_deletes_state(self, tmp_path):
+    def test_stop_clears_all(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
-        write_state_file(dot_claude, 2, "task", 5)
+        write_session(dot_claude, "ses-A", 2, "task", 5)
+        write_pending(dot_claude, 0, "other task", 3)
         result = run_main(proj, ["stop"])
         assert result.returncode == 0
         assert "Session stopped" in result.stdout
         assert read_state_file(dot_claude) is None
+        assert read_pending(dot_claude) is None
 
-    def test_stop_no_session(self, tmp_path):
+    def test_status_shows_pending(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
-        result = run_main(proj, ["stop"])
+        write_pending(dot_claude, 0, "my task", 3)
+        result = run_status(proj)
         assert result.returncode == 0
-        assert read_state_file(dot_claude) is None
-
-    def test_status_routes(self, tmp_path):
-        proj, dot_claude = make_project(tmp_path)
-        write_state_file(dot_claude, 1, "my task", 3)
-        result = run_main(proj, ["status"])
-        assert result.returncode == 0
-        assert "1/3" in result.stdout
+        assert "pending" in result.stdout.lower()
+        assert "my task" in result.stdout
 
     def test_no_args_routes_to_start(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
         result = run_main(proj, [], stdin_text="3 Do stuff")
         assert result.returncode == 0
-        state = read_state_file(dot_claude)
-        assert state["iteration"] == 1
-        assert state["prompt"] == "Do stuff"
-        assert state["total"] == 3
+        pending = read_pending(dot_claude)
+        assert pending["iteration"] == 0
+        assert pending["prompt"] == "Do stuff"
+        assert pending["total"] == 3
 
-    def test_hook_routes(self, tmp_path):
+    def test_hook_activates_pending(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
-        write_state_file(dot_claude, 1, "task", 5, session_id="test")
+        write_pending(dot_claude, 0, "task", 5)
         event = json.dumps({"hook_event_name": "Stop", "last_assistant_message": "",
-                            "session_id": "test", "transcript_path": "/dev/null"})
+                            "session_id": "ses-A", "transcript_path": "/dev/null"})
         result = run_main(proj, ["hook"], stdin_text=event)
         assert result.returncode == 0
         parsed = json.loads(result.stdout)
         assert parsed["decision"] == "block"
+        # Pending consumed, session created in persist.json
+        assert read_pending(dot_claude) is None
+        assert read_session(dot_claude, "ses-A")["iteration"] == 1
 
 
-# --- Integration tests: start() reads args from stdin ---
+# --- Integration tests: start() ---
 
 class TestStart:
-    def test_basic_args(self, tmp_path):
+    def test_basic_start(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
         result = run_start(proj, "5 Fix the bug")
         assert result.returncode == 0
-        state = read_state_file(dot_claude)
-        assert state["iteration"] == 1
-        assert state["prompt"] == "Fix the bug"
-        assert state["total"] == 5
-        assert state["session_id"] is None  # no persist-session file
-
-    def test_reads_session_id_from_file(self, tmp_path):
-        proj, dot_claude = make_project(tmp_path)
-        write_session_file(dot_claude, "ses-123")
-        result = run_start(proj, "5 Fix the bug")
-        assert result.returncode == 0
-        assert read_state_file(dot_claude)["session_id"] == "ses-123"
+        pending = read_pending(dot_claude)
+        assert pending["iteration"] == 0
+        assert pending["prompt"] == "Fix the bug"
+        assert pending["total"] == 5
+        # No persist.json yet — only pending
+        assert read_state_file(dot_claude) is None
 
     def test_multiline_task(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
         run_start(proj, "3 Fix the bug.\nAlso update tests.")
-        assert read_state_file(dot_claude)["prompt"] == "Fix the bug.\nAlso update tests."
+        assert read_pending(dot_claude)["prompt"] == "Fix the bug.\nAlso update tests."
 
     def test_curly_braces(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
         run_start(proj, "2 Fix the {name} field")
-        assert read_state_file(dot_claude)["prompt"] == "Fix the {name} field"
+        assert read_pending(dot_claude)["prompt"] == "Fix the {name} field"
 
     def test_shell_metacharacters(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
         run_start(proj, "1 echo $HOME && rm -rf /; don't")
-        assert read_state_file(dot_claude)["prompt"] == "echo $HOME && rm -rf /; don't"
+        assert read_pending(dot_claude)["prompt"] == "echo $HOME && rm -rf /; don't"
 
     def test_quotes(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
         run_start(proj, """2 Fix the "parser" and it's 'edge cases'""")
-        assert read_state_file(dot_claude)["prompt"] == """Fix the "parser" and it's 'edge cases'"""
+        assert read_pending(dot_claude)["prompt"] == """Fix the "parser" and it's 'edge cases'"""
 
     def test_no_project_root(self, tmp_path):
         result = run_start(tmp_path, "3 Do stuff")
@@ -207,8 +202,6 @@ class TestStart:
         result = run_start(tmp_path, "3 Do stuff")
         assert result.returncode == 0
         assert (tmp_path / ".claude").is_dir()
-        assert "created" in result.stderr.lower()
-        assert read_state_file(tmp_path / ".claude") is not None
 
     def test_empty_stdin(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
@@ -222,12 +215,27 @@ class TestStart:
         assert result.returncode == 1
         assert "Usage" in result.stderr
 
+    def test_no_overwrite_pending(self, tmp_path):
+        proj, dot_claude = make_project(tmp_path)
+        write_pending(dot_claude, 0, "old task", total=5)
+        run_start(proj, "10 New task")
+        assert read_pending(dot_claude)["prompt"] == "old task"
+
+    def test_time_limit_start(self, tmp_path):
+        proj, dot_claude = make_project(tmp_path)
+        result = run_start(proj, "2h Fix the bug")
+        assert result.returncode == 0
+        data = read_pending(dot_claude)
+        assert data["prompt"] == "Fix the bug"
+        assert data["total"] is None
+        assert data["deadline"] is not None
+        assert data["deadline"] > time.time()
+
     def test_status_active(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
-        write_state_file(dot_claude, 3, "Fix the bug", 5)
+        write_session(dot_claude, "ses-A", 3, "Fix the bug", 5)
         result = run_status(proj)
         assert result.returncode == 0
-        assert "3/5" in result.stdout
         assert "Fix the bug" in result.stdout
 
     def test_status_inactive(self, tmp_path):
@@ -236,249 +244,203 @@ class TestStart:
         assert result.returncode == 0
         assert "No active session" in result.stdout
 
-    def test_no_overwrite_active_session(self, tmp_path):
-        proj, dot_claude = make_project(tmp_path)
-        write_state_file(dot_claude, 3, "old task", total=5, session_id="old-ses")
-        write_session_file(dot_claude, "new-ses")
-        run_start(proj, "10 New task")
-        state = read_state_file(dot_claude)
-        assert state["prompt"] == "old task"
-        assert state["session_id"] == "old-ses"
-
-    def test_time_limit_start(self, tmp_path):
-        proj, dot_claude = make_project(tmp_path)
-        result = run_start(proj, "2h Fix the bug")
-        assert result.returncode == 0
-        data = read_state_file(dot_claude)
-        assert data["prompt"] == "Fix the bug"
-        assert data["total"] is None
-        assert data["deadline"] is not None
-        assert data["deadline"] > time.time()
-
-    def test_time_limit_status(self, tmp_path):
-        proj, dot_claude = make_project(tmp_path)
-        write_state_file(dot_claude, 3, "Fix the bug", deadline=time.time() + 3600)
-        result = run_status(proj)
-        assert result.returncode == 0
-        assert "remaining" in result.stdout
-
 
 # --- Integration tests: hook state machine ---
 
 class TestHookStateMachine:
-    def test_first_hook_continues(self, tmp_path):
+    def test_first_hook_activates_pending(self, tmp_path):
+        """First stop hook promotes pending to persist.json."""
         proj, dot_claude = make_project(tmp_path)
-        write_state_file(dot_claude, 1, "Write hello world", 3, session_id="test-session")
+        write_pending(dot_claude, 0, "Write hello world", 3)
 
-        decision = run_hook(proj, make_stop_event("I'll start working on this."))
+        decision = run_hook(proj, make_stop_event("I'll start working.", session_id="ses-A"))
 
         assert decision["decision"] == "block"
         assert "Iteration" in decision["reason"]
         assert "Write hello world" in decision["reason"]
-        state = read_state_file(dot_claude)
-        assert state["iteration"] == 2
-        assert state["session_id"] == "test-session"
+        state = read_session(dot_claude, "ses-A")
+        assert state["iteration"] == 1
+        assert read_pending(dot_claude) is None
 
     def test_normal_continuation(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
-        write_state_file(dot_claude, 1, "Do the thing", 5, session_id="test-session")
+        write_session(dot_claude, "ses-A", 1, "Do the thing", 5)
 
-        decision = run_hook(proj, make_stop_event("Made some progress."))
+        decision = run_hook(proj, make_stop_event("Made some progress.", session_id="ses-A"))
 
         assert decision["decision"] == "block"
-        assert read_state_file(dot_claude)["iteration"] == 2
+        assert read_session(dot_claude, "ses-A")["iteration"] == 2
 
     def test_task_complete_triggers_verification(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
-        write_state_file(dot_claude, 2, "Build feature X", 5, session_id="test-session")
+        write_session(dot_claude, "ses-A", 2, "Build feature X", 5)
 
-        decision = run_hook(proj, make_stop_event("Done! TASK_COMPLETE"))
+        decision = run_hook(proj, make_stop_event("Done! TASK_COMPLETE", session_id="ses-A"))
 
         assert decision["decision"] == "block"
         assert "Verification" in decision["reason"]
 
     def test_review_okay_ends_session(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
-        write_state_file(dot_claude, 3, "Build feature X", 5, session_id="test-session")
+        write_session(dot_claude, "ses-A", 3, "Build feature X", 5)
 
-        decision = run_hook(proj, make_stop_event("Everything looks good. REVIEW_OKAY"))
+        decision = run_hook(proj, make_stop_event("Everything looks good. REVIEW_OKAY", session_id="ses-A"))
 
         assert decision["decision"] == "block"
         assert "verified" in decision["reason"].lower()
-        assert read_state_file(dot_claude) is None
+        assert read_session(dot_claude, "ses-A") is None
 
     def test_review_incomplete_continues(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
-        write_state_file(dot_claude, 3, "Build feature X", 5, session_id="test-session")
+        write_session(dot_claude, "ses-A", 3, "Build feature X", 5)
 
-        decision = run_hook(proj, make_stop_event("Found a bug. REVIEW_INCOMPLETE"))
+        decision = run_hook(proj, make_stop_event("Found a bug. REVIEW_INCOMPLETE", session_id="ses-A"))
 
         assert decision["decision"] == "block"
-        assert read_state_file(dot_claude)["iteration"] == 4
+        assert read_session(dot_claude, "ses-A")["iteration"] == 4
 
     def test_iterations_exhausted(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
-        write_state_file(dot_claude, 3, "Do stuff", 3, session_id="test-session")
+        write_session(dot_claude, "ses-A", 3, "Do stuff", 3)
 
-        decision = run_hook(proj, make_stop_event("Still working..."))
+        decision = run_hook(proj, make_stop_event("Still working...", session_id="ses-A"))
 
         assert "exhausted" in decision["reason"].lower()
-        assert read_state_file(dot_claude) is None
+        assert read_session(dot_claude, "ses-A") is None
 
-    def test_no_state_file_silent_exit(self, tmp_path):
+    def test_no_state_no_pending_silent(self, tmp_path):
         proj, _ = make_project(tmp_path)
         decision = run_hook(proj, make_stop_event("Hello"))
         assert decision is None
 
+    def test_no_matching_session_no_pending(self, tmp_path):
+        proj, dot_claude = make_project(tmp_path)
+        write_session(dot_claude, "ses-A", 3, "task", 5)
+        decision = run_hook(proj, make_stop_event("Hello", session_id="ses-B"))
+        assert decision is None
+        assert read_session(dot_claude, "ses-A")["iteration"] == 3
+
     def test_non_stop_event_ignored(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
-        write_state_file(dot_claude, 3, "task", 5, session_id="test-session")
+        write_session(dot_claude, "ses-A", 3, "task", 5)
 
-        decision = run_hook(proj, {"hook_event_name": "NotStop", "last_assistant_message": ""})
+        decision = run_hook(proj, {"hook_event_name": "NotStop", "last_assistant_message": "",
+                                   "session_id": "ses-A"})
         assert decision is None
-        assert read_state_file(dot_claude)["iteration"] == 3
+        assert read_session(dot_claude, "ses-A")["iteration"] == 3
+
+    def test_no_session_id_in_event_ignored(self, tmp_path):
+        proj, dot_claude = make_project(tmp_path)
+        write_pending(dot_claude, 0, "task", 5)
+        decision = run_hook(proj, {"hook_event_name": "Stop", "last_assistant_message": "",
+                                   "transcript_path": "/dev/null"})
+        assert decision is None
+        # Pending not consumed
+        assert read_pending(dot_claude) is not None
 
     def test_curly_braces_in_prompt(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
-        write_state_file(dot_claude, 2, "Fix the {name} field", 5, session_id="test-session")
-        decision = run_hook(proj, make_stop_event("Working on it."))
+        write_session(dot_claude, "ses-A", 2, "Fix the {name} field", 5)
+        decision = run_hook(proj, make_stop_event("Working on it.", session_id="ses-A"))
         assert "Fix the {name} field" in decision["reason"]
 
     def test_curly_braces_in_verification(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
-        write_state_file(dot_claude, 2, "Update {foo} and {bar}", 5, session_id="test-session")
-        decision = run_hook(proj, make_stop_event("Done! TASK_COMPLETE"))
+        write_session(dot_claude, "ses-A", 2, "Update {foo} and {bar}", 5)
+        decision = run_hook(proj, make_stop_event("Done! TASK_COMPLETE", session_id="ses-A"))
         assert "Update {foo} and {bar}" in decision["reason"]
 
     def test_multiline_prompt_in_hook(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
         task = "Step 1: fix parsing.\nStep 2: add tests.\nStep 3: deploy."
-        write_state_file(dot_claude, 2, task, 5, session_id="test-session")
-        decision = run_hook(proj, make_stop_event("Progress made."))
+        write_session(dot_claude, "ses-A", 2, task, 5)
+        decision = run_hook(proj, make_stop_event("Progress made.", session_id="ses-A"))
         assert task in decision["reason"]
 
     def test_full_lifecycle(self, tmp_path):
-        """Full start -> hook -> ... -> done."""
+        """Full start -> hook (activate) -> hook -> ... -> done."""
         proj, dot_claude = make_project(tmp_path)
 
-        # Simulate UserPromptSubmit writing session file
-        write_session_file(dot_claude, "test-session")
-
-        # 1. Start
+        # 1. Start (writes pending, no persist.json)
         run_start(proj, "5 Create hello.txt")
-        state = read_state_file(dot_claude)
-        assert state["iteration"] == 1
-        assert state["session_id"] == "test-session"
+        assert read_pending(dot_claude) is not None
+        assert read_state_file(dot_claude) is None
 
-        # 2. First hook: iteration 2
-        d = run_hook(proj, make_stop_event("Starting work."))
+        # 2. First hook: activates pending -> ses-A in persist.json, iteration 1
+        d = run_hook(proj, make_stop_event("Starting work.", session_id="ses-A"))
         assert d["decision"] == "block"
-        assert read_state_file(dot_claude)["iteration"] == 2
+        assert read_pending(dot_claude) is None
+        assert read_session(dot_claude, "ses-A")["iteration"] == 1
 
-        # 3. Second hook: iteration 3
-        d = run_hook(proj, make_stop_event("Created the file."))
-        assert read_state_file(dot_claude)["iteration"] == 3
+        # 3. Second hook: iteration 2
+        d = run_hook(proj, make_stop_event("Created the file.", session_id="ses-A"))
+        assert read_session(dot_claude, "ses-A")["iteration"] == 2
 
         # 4. TASK_COMPLETE -> verification
-        d = run_hook(proj, make_stop_event("All done. TASK_COMPLETE"))
+        d = run_hook(proj, make_stop_event("All done. TASK_COMPLETE", session_id="ses-A"))
         assert "Verification" in d["reason"]
 
         # 5. REVIEW_OKAY -> session ends
-        d = run_hook(proj, make_stop_event("Verified. REVIEW_OKAY"))
+        d = run_hook(proj, make_stop_event("Verified. REVIEW_OKAY", session_id="ses-A"))
         assert "verified" in d["reason"].lower()
-        assert read_state_file(dot_claude) is None
+        assert read_session(dot_claude, "ses-A") is None
 
     def test_deadline_expired_ends_session(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
-        write_state_file(dot_claude, 2, "Do stuff", deadline=time.time() - 1, session_id="test-session")
-        decision = run_hook(proj, make_stop_event("Still working..."))
+        write_session(dot_claude, "ses-A", 2, "Do stuff",
+                      deadline=time.time() - 1)
+        decision = run_hook(proj, make_stop_event("Still working...", session_id="ses-A"))
         assert "time limit" in decision["reason"].lower()
-        assert read_state_file(dot_claude) is None
+        assert read_session(dot_claude, "ses-A") is None
 
     def test_deadline_not_expired_continues(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
-        write_state_file(dot_claude, 2, "Do stuff", deadline=time.time() + 3600, session_id="test-session")
-        decision = run_hook(proj, make_stop_event("Making progress."))
+        write_session(dot_claude, "ses-A", 2, "Do stuff",
+                      deadline=time.time() + 3600)
+        decision = run_hook(proj, make_stop_event("Making progress.", session_id="ses-A"))
         assert "Iteration" in decision["reason"]
-        assert read_state_file(dot_claude)["iteration"] == 3
-
-
-# --- UserPromptSubmit hook tests ---
-
-class TestPromptHook:
-    def test_writes_session_file_on_persist(self, tmp_path):
-        proj, dot_claude = make_project(tmp_path)
-        event = make_prompt_event("/persist 5 do stuff", session_id="ses-abc")
-        run_persist(proj, "prompt_hook", json.dumps(event))
-        assert (dot_claude / "persist-session").read_text() == "ses-abc"
-
-    def test_ignores_non_persist_prompts(self, tmp_path):
-        proj, dot_claude = make_project(tmp_path)
-        event = make_prompt_event("just a normal message", session_id="ses-abc")
-        run_persist(proj, "prompt_hook", json.dumps(event))
-        assert not (dot_claude / "persist-session").exists()
-
-    def test_creates_dot_claude_if_needed(self, tmp_path):
-        """prompt_hook creates .claude/ if project has .git but no .claude."""
-        proj = tmp_path / "proj"
-        proj.mkdir()
-        (proj / ".git").mkdir()
-        # No .claude yet — prompt_hook should handle gracefully
-        # (state_file_path returns None if no .claude, but prompt_hook creates it)
-        dot_claude = proj / ".claude"
-        event = make_prompt_event("/persist 5 task", session_id="ses-abc")
-        run_persist(proj, "prompt_hook", json.dumps(event))
-        # It's OK if this doesn't create .claude — start() handles that.
-        # The important thing is it doesn't crash.
+        assert read_session(dot_claude, "ses-A")["iteration"] == 3
 
 
 # --- Session isolation tests ---
 
 class TestSessionIsolation:
-    def test_session_id_set_at_start(self, tmp_path):
+    def test_different_sessions_coexist(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
-        write_session_file(dot_claude, "session-A")
-        run_start(proj, "5 task")
-        assert read_state_file(dot_claude)["session_id"] == "session-A"
+        write_session(dot_claude, "ses-A", 2, "task A", 5)
+        write_session(dot_claude, "ses-B", 1, "task B", 3)
 
-    def test_no_session_file_starts_without_session(self, tmp_path):
-        proj, dot_claude = make_project(tmp_path)
-        run_start(proj, "5 task")
-        assert read_state_file(dot_claude)["session_id"] is None
-
-    def test_unclaimed_session_accepts_hooks(self, tmp_path):
-        """A session with no session_id accepts hooks from any session."""
-        proj, dot_claude = make_project(tmp_path)
-        write_state_file(dot_claude, 1, "task", 5)
-        decision = run_hook(proj, make_stop_event("progress", session_id="session-A"))
-        assert decision is not None
-        assert decision["decision"] == "block"
-        assert read_state_file(dot_claude)["iteration"] == 2
+        run_hook(proj, make_stop_event("progress", session_id="ses-A"))
+        assert read_session(dot_claude, "ses-A")["iteration"] == 3
+        assert read_session(dot_claude, "ses-B")["iteration"] == 1
 
     def test_other_session_ignored(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
-        write_state_file(dot_claude, 2, "task", 5, session_id="session-A")
-        decision = run_hook(proj, make_stop_event("progress", session_id="session-B"))
+        write_session(dot_claude, "ses-A", 2, "task", 5)
+        decision = run_hook(proj, make_stop_event("progress", session_id="ses-B"))
         assert decision is None
-        assert read_state_file(dot_claude)["iteration"] == 2
+        assert read_session(dot_claude, "ses-A")["iteration"] == 2
 
-    def test_owning_session_proceeds(self, tmp_path):
+    def test_session_end_preserves_other(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
-        write_state_file(dot_claude, 2, "task", 5, session_id="session-A")
-        decision = run_hook(proj, make_stop_event("progress", session_id="session-A"))
-        assert decision["decision"] == "block"
-        assert read_state_file(dot_claude)["iteration"] == 3
+        write_session(dot_claude, "ses-A", 3, "task A", 3)
+        write_session(dot_claude, "ses-B", 1, "task B", 5)
 
-    def test_other_session_cannot_complete(self, tmp_path):
+        decision = run_hook(proj, make_stop_event("done", session_id="ses-A"))
+        assert "exhausted" in decision["reason"].lower()
+        assert read_session(dot_claude, "ses-A") is None
+        assert read_session(dot_claude, "ses-B")["iteration"] == 1
+
+    def test_pending_only_claimed_by_first_session(self, tmp_path):
+        """Only the first stop hook claims the pending session."""
         proj, dot_claude = make_project(tmp_path)
-        write_state_file(dot_claude, 3, "task", 5, session_id="session-A")
-        decision = run_hook(proj, make_stop_event("REVIEW_OKAY", session_id="session-B"))
+        write_pending(dot_claude, 0, "task", 5)
+
+        # ses-A claims it
+        run_hook(proj, make_stop_event("working", session_id="ses-A"))
+        assert read_session(dot_claude, "ses-A")["iteration"] == 1
+        assert read_pending(dot_claude) is None
+
+        # ses-B gets nothing
+        decision = run_hook(proj, make_stop_event("working", session_id="ses-B"))
         assert decision is None
-        assert read_state_file(dot_claude) is not None
-
-    def test_stop_works_regardless_of_session(self, tmp_path):
-        proj, dot_claude = make_project(tmp_path)
-        write_state_file(dot_claude, 3, "task", 5, session_id="session-A")
-        result = run_main(proj, ["stop"])
-        assert result.returncode == 0
-        assert read_state_file(dot_claude) is None

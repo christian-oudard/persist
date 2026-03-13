@@ -44,41 +44,78 @@ describe what remains before the keyword.
 """
 
 
-# --- State file ---
+# --- State files ---
 
-def state_file_path():
+def _state_path():
     d = dot_claude_dir()
     return d / 'persist.json' if d else None
 
 
-def read_state_file():
-    path = state_file_path()
+def _pending_path():
+    d = dot_claude_dir()
+    return d / 'persist-pending.json' if d else None
+
+
+def read_all_sessions():
+    path = _state_path()
     if path and path.exists():
         return json.load(path.open())
+    return {}
 
 
-def write_state_file(iteration, prompt, total=None, deadline=None, session_id=None):
-    json.dump({'iteration': iteration, 'prompt': prompt, 'total': total,
-               'deadline': deadline, 'session_id': session_id},
-              state_file_path().open('w'))
+def _write_all_sessions(sessions):
+    path = _state_path()
+    if sessions:
+        json.dump(sessions, path.open('w'))
+    elif path and path.exists():
+        path.unlink()
 
 
-def delete_state_file():
-    path = state_file_path()
-    if path:
-        path.unlink(missing_ok=True)
+def read_session(session_id):
+    return read_all_sessions().get(session_id)
 
 
-def _read_session_id():
-    """Read session_id from .claude/persist-session (written by UserPromptSubmit hook)."""
-    path = state_file_path()
-    if path is None:
+def write_session(session_id, state):
+    sessions = read_all_sessions()
+    sessions[session_id] = state
+    _write_all_sessions(sessions)
+
+
+def delete_session(session_id):
+    sessions = read_all_sessions()
+    sessions.pop(session_id, None)
+    _write_all_sessions(sessions)
+
+
+def read_pending():
+    path = _pending_path()
+    if path and path.exists():
+        return json.load(path.open())
+    return None
+
+
+def write_pending(state):
+    path = _pending_path()
+    json.dump(state, path.open('w'))
+
+
+def delete_pending():
+    path = _pending_path()
+    if path and path.exists():
+        path.unlink()
+
+
+def activate_pending(session_id):
+    """Promote pending session to persist.json under the given session_id.
+
+    Returns the activated state, or None if no pending session.
+    """
+    pending = read_pending()
+    if pending is None:
         return None
-    session_file = path.parent / 'persist-session'
-    try:
-        return session_file.read_text().strip() or None
-    except FileNotFoundError:
-        return None
+    delete_pending()
+    write_session(session_id, pending)
+    return pending
 
 
 # --- Commands ---
@@ -90,10 +127,6 @@ def start():
 
     raw = sys.stdin.read().strip() if not sys.stdin.isatty() else ''
 
-    # Don't overwrite an active session.
-    if read_state_file():
-        return
-
     if not raw:
         print("Usage: /persist LIMIT TASK", file=sys.stderr)
         sys.exit(1)
@@ -103,19 +136,51 @@ def start():
         print("Usage: /persist LIMIT TASK", file=sys.stderr)
         sys.exit(1)
 
+    # Don't overwrite an active pending session.
+    if read_pending():
+        return
+
     total, deadline = parse_limit(parts[0])
     prompt = parts[1]
-    session_id = _read_session_id()
-    write_state_file(1, prompt, total=total, deadline=deadline, session_id=session_id)
-    # Printed to stdout so the skill expansion includes it as context for Claude.
+    write_pending({
+        'iteration': 0, 'prompt': prompt,
+        'total': total, 'deadline': deadline,
+    })
     print(WORK_PROMPT.format(prompt=prompt, iteration=1))
 
 
-def stop_hook(state, event):
+def stop():
+    # Clear any pending session.
+    delete_pending()
+    # Without session_id, clear all sessions.
+    path = _state_path()
+    if path and path.exists():
+        path.unlink()
+    print('Session stopped.')
+
+
+def status():
+    pending = read_pending()
+    if pending:
+        from .common import format_remaining
+        print(f"Session pending (awaiting first stop hook)")
+        print(f"Task: {pending['prompt']}")
+        return
+    # Without session_id we can't look up a specific session; show all.
+    sessions = read_all_sessions()
+    if not sessions:
+        print("No active session.")
+        return
+    from .common import format_remaining
+    for sid, data in sessions.items():
+        print(f"Session {sid[:8]}...: iteration {format_remaining(data)}")
+        print(f"  Task: {data['prompt']}")
+
+
+def stop_hook(session_id, state, event):
     """Handle a stop hook for a persist session."""
     prompt = state['prompt']
     iteration = state['iteration'] + 1
-    session_id = state.get('session_id')
 
     last_msg = event.get('last_assistant_message', '')
     keyword = find_keyword(last_msg)
@@ -123,28 +188,32 @@ def stop_hook(state, event):
     expired = is_expired({**state, 'iteration': iteration})
 
     if keyword == 'REVIEW_OKAY':
-        delete_state_file()
+        delete_session(session_id)
         print(json.dumps({
             "decision": "block",
             "reason": "Session complete (verified). Summarize what you accomplished.",
         }))
     elif expired:
-        delete_state_file()
+        delete_session(session_id)
         reason = 'time limit reached' if expired == 'deadline' else 'iterations exhausted'
         print(json.dumps({
             "decision": "block",
             "reason": f"Session complete ({reason}). Summarize what you accomplished.",
         }))
     elif keyword == 'TASK_COMPLETE':
-        write_state_file(iteration, prompt, total=state.get('total'),
-                         deadline=state.get('deadline'), session_id=session_id)
+        write_session(session_id, {
+            'iteration': iteration, 'prompt': prompt,
+            'total': state.get('total'), 'deadline': state.get('deadline'),
+        })
         print(json.dumps({
             "decision": "block",
             "reason": VERIFICATION_PROMPT.format(prompt=prompt),
         }))
     else:
-        write_state_file(iteration, prompt, total=state.get('total'),
-                         deadline=state.get('deadline'), session_id=session_id)
+        write_session(session_id, {
+            'iteration': iteration, 'prompt': prompt,
+            'total': state.get('total'), 'deadline': state.get('deadline'),
+        })
         print(json.dumps({
             "decision": "block",
             "reason": WORK_PROMPT.format(prompt=prompt, iteration=iteration),

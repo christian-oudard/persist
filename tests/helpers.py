@@ -17,26 +17,53 @@ def make_project(tmp_path):
 
 
 def read_state_file(dot_claude):
+    """Read the raw persist.json (keyed by session_id)."""
     state_file = dot_claude / "persist.json"
     if state_file.exists():
         return json.loads(state_file.read_text())
     return None
 
 
-def write_state_file(dot_claude, iteration, prompt, total=None, deadline=None,
-                     session_id=None):
-    (dot_claude / "persist.json").write_text(json.dumps({
+def read_session(dot_claude, session_id):
+    """Read a specific session's state from persist.json."""
+    data = read_state_file(dot_claude)
+    if data:
+        return data.get(session_id)
+    return None
+
+
+def read_pending(dot_claude):
+    """Read persist-pending.json."""
+    path = dot_claude / "persist-pending.json"
+    if path.exists():
+        return json.loads(path.read_text())
+    return None
+
+
+def write_session(dot_claude, session_id, iteration, prompt, total=None,
+                  deadline=None):
+    """Write a session entry to persist.json."""
+    state_file = dot_claude / "persist.json"
+    data = {}
+    if state_file.exists():
+        data = json.loads(state_file.read_text())
+    data[session_id] = {
         "iteration": iteration,
         "prompt": prompt,
         "total": total,
         "deadline": deadline,
-        "session_id": session_id,
+    }
+    state_file.write_text(json.dumps(data))
+
+
+def write_pending(dot_claude, iteration, prompt, total=None, deadline=None):
+    """Write persist-pending.json as start() would."""
+    (dot_claude / "persist-pending.json").write_text(json.dumps({
+        "iteration": iteration,
+        "prompt": prompt,
+        "total": total,
+        "deadline": deadline,
     }))
-
-
-def write_session_file(dot_claude, session_id):
-    """Write .claude/persist-session as the UserPromptSubmit hook would."""
-    (dot_claude / "persist-session").write_text(session_id)
 
 
 def run_persist(cwd, func, stdin_text, extra_env=None):
@@ -93,12 +120,4 @@ def make_stop_event(last_msg="", session_id="test-session"):
         "transcript_path": "/dev/null",
         "last_assistant_message": last_msg,
         "session_id": session_id,
-    }
-
-
-def make_prompt_event(prompt, session_id="test-session"):
-    return {
-        "hook_event_name": "UserPromptSubmit",
-        "session_id": session_id,
-        "prompt": prompt,
     }
