@@ -1,9 +1,10 @@
 """Persistent coding sessions for Claude Code.
 
-    persist            Start from /persist slash command
-    persist hook       Stop hook handler (called by Claude Code)
-    persist stop       Cancel a running session
-    persist status     Show session status
+    persist              Start from /persist slash command
+    persist hook         Stop hook handler (called by Claude Code)
+    persist prompt-hook  UserPromptSubmit hook (captures session_id)
+    persist stop         Cancel a running session
+    persist status       Show session status
 """
 
 import json
@@ -13,6 +14,7 @@ from .common import parse_limit, is_expired, format_remaining  # noqa: F401
 from .fixed import (  # noqa: F401
     start, stop_hook, find_keyword,
     read_state_file, write_state_file, delete_state_file,
+    state_file_path,
 )
 
 
@@ -20,6 +22,8 @@ def main():
     cmd = sys.argv[1] if len(sys.argv) > 1 else None
     if cmd == 'hook':
         hook()
+    elif cmd == 'prompt-hook':
+        prompt_hook()
     elif cmd == 'stop':
         delete_state_file()
         print('Session stopped.')
@@ -27,6 +31,22 @@ def main():
         status()
     else:
         start()
+
+
+def prompt_hook():
+    """UserPromptSubmit hook: write session_id when user invokes /persist."""
+    event = json.loads(sys.stdin.read())
+    prompt = event.get('prompt', '')
+    if not prompt.startswith('/persist '):
+        return
+    session_id = event.get('session_id')
+    if not session_id:
+        return
+    path = state_file_path()
+    if path is None:
+        return
+    path.parent.mkdir(exist_ok=True)
+    (path.parent / 'persist-session').write_text(session_id)
 
 
 def hook():
@@ -41,14 +61,8 @@ def hook():
     event_session_id = event.get('session_id')
     state_session_id = state.get('session_id')
 
-    if state_session_id is not None and state_session_id != event_session_id:
-        # State belongs to a different session; don't interfere.
+    if state_session_id != event_session_id:
         return
-
-    if state_session_id is None and event_session_id is not None:
-        # Claim this session.
-        state['session_id'] = event_session_id
-        write_state_file(**state)
 
     stop_hook(state, event)
 

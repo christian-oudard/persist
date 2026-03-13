@@ -23,7 +23,8 @@ def read_state_file(dot_claude):
     return None
 
 
-def write_state_file(dot_claude, iteration, prompt, total=None, deadline=None, session_id=None):
+def write_state_file(dot_claude, iteration, prompt, total=None, deadline=None,
+                     session_id=None):
     (dot_claude / "persist.json").write_text(json.dumps({
         "iteration": iteration,
         "prompt": prompt,
@@ -31,6 +32,11 @@ def write_state_file(dot_claude, iteration, prompt, total=None, deadline=None, s
         "deadline": deadline,
         "session_id": session_id,
     }))
+
+
+def write_session_file(dot_claude, session_id):
+    """Write .claude/persist-session as the UserPromptSubmit hook would."""
+    (dot_claude / "persist-session").write_text(session_id)
 
 
 def run_persist(cwd, func, stdin_text, extra_env=None):
@@ -87,4 +93,12 @@ def make_stop_event(last_msg="", session_id="test-session"):
         "transcript_path": "/dev/null",
         "last_assistant_message": last_msg,
         "session_id": session_id,
+    }
+
+
+def make_prompt_event(prompt, session_id="test-session"):
+    return {
+        "hook_event_name": "UserPromptSubmit",
+        "session_id": session_id,
+        "prompt": prompt,
     }

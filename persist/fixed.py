@@ -69,6 +69,18 @@ def delete_state_file():
         path.unlink(missing_ok=True)
 
 
+def _read_session_id():
+    """Read session_id from .claude/persist-session (written by UserPromptSubmit hook)."""
+    path = state_file_path()
+    if path is None:
+        return None
+    session_file = path.parent / 'persist-session'
+    try:
+        return session_file.read_text().strip() or None
+    except FileNotFoundError:
+        return None
+
+
 # --- Commands ---
 
 def start():
@@ -93,8 +105,9 @@ def start():
 
     total, deadline = parse_limit(parts[0])
     prompt = parts[1]
+    session_id = _read_session_id()
     # The initial Claude response (from the slash command text) is iteration 1.
-    write_state_file(1, prompt, total=total, deadline=deadline)
+    write_state_file(1, prompt, total=total, deadline=deadline, session_id=session_id)
 
 
 def stop_hook(state, event):
