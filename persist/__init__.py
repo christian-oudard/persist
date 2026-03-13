@@ -38,6 +38,18 @@ def hook():
     if event['hook_event_name'] != 'Stop':
         return
 
+    event_session_id = event.get('session_id')
+    state_session_id = state.get('session_id')
+
+    if state_session_id is not None and state_session_id != event_session_id:
+        # State belongs to a different session; don't interfere.
+        return
+
+    if state_session_id is None and event_session_id is not None:
+        # Claim this session.
+        state['session_id'] = event_session_id
+        write_state_file(**state)
+
     stop_hook(state, event)
 
 

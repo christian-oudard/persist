@@ -144,12 +144,12 @@ class TestMain:
         proj, dot_claude = make_project(tmp_path)
         result = run_main(proj, [], stdin_text="3 Do stuff")
         assert result.returncode == 0
-        assert read_state_file(dot_claude) == {"iteration": 1, "prompt": "Do stuff", "total": 3, "deadline": None}
+        assert read_state_file(dot_claude) == {"iteration": 1, "prompt": "Do stuff", "total": 3, "deadline": None, "session_id": None}
 
     def test_hook_routes(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
         write_state_file(dot_claude, 1, "task", 5)
-        event = json.dumps({"hook_event_name": "Stop", "last_assistant_message": ""})
+        event = json.dumps({"hook_event_name": "Stop", "last_assistant_message": "", "session_id": "test"})
         result = run_main(proj, ["hook"], stdin_text=event)
         assert result.returncode == 0
         parsed = json.loads(result.stdout)
@@ -165,7 +165,7 @@ class TestStart:
         proj, dot_claude = make_project(tmp_path)
         result = run_start(proj, "5 Fix the bug")
         assert result.returncode == 0
-        assert read_state_file(dot_claude) == {"iteration": 1, "prompt": "Fix the bug", "total": 5, "deadline": None}
+        assert read_state_file(dot_claude) == {"iteration": 1, "prompt": "Fix the bug", "total": 5, "deadline": None, "session_id": None}
 
     def test_multiline_task(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
@@ -230,7 +230,7 @@ class TestStart:
 
     def test_no_overwrite_active_session(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
-        existing = {"iteration": 3, "prompt": "old task", "total": 5, "deadline": None}
+        existing = {"iteration": 3, "prompt": "old task", "total": 5, "deadline": None, "session_id": None}
         write_state_file(dot_claude, 3, "old task", total=5)
         run_start(proj, "10 New task")
         assert read_state_file(dot_claude) == existing
@@ -272,7 +272,7 @@ class TestHookStateMachine:
         assert decision["decision"] == "block"
         assert "Iteration" in decision["reason"]
         assert "Write hello world" in decision["reason"]
-        assert read_state_file(dot_claude) == {"iteration": 2, "prompt": "Write hello world", "total": 3, "deadline": None}
+        assert read_state_file(dot_claude) == {"iteration": 2, "prompt": "Write hello world", "total": 3, "deadline": None, "session_id": "test-session"}
 
     def test_normal_continuation(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
@@ -369,12 +369,13 @@ class TestHookStateMachine:
 
         # 1. Start: parse args from stdin, write state file
         run_start(proj, "5 Create hello.txt")
-        assert read_state_file(dot_claude) == {"iteration": 1, "prompt": "Create hello.txt", "total": 5, "deadline": None}
+        assert read_state_file(dot_claude) == {"iteration": 1, "prompt": "Create hello.txt", "total": 5, "deadline": None, "session_id": None}
 
-        # 2. First hook: iteration 2
+        # 2. First hook: iteration 2 (also claims the session)
         d = run_hook(proj, make_stop_event("Starting work."))
         assert d["decision"] == "block"
         assert read_state_file(dot_claude)["iteration"] == 2
+        assert read_state_file(dot_claude)["session_id"] == "test-session"
 
         # 3. Second hook: iteration 3
         d = run_hook(proj, make_stop_event("Created the file."))
@@ -407,3 +408,62 @@ class TestHookStateMachine:
 
         assert "Iteration" in decision["reason"]
         assert read_state_file(dot_claude)["iteration"] == 3
+
+
+# --- Session isolation tests ---
+
+class TestSessionIsolation:
+    """Verify that hooks from different sessions don't interfere."""
+
+    def test_first_hook_claims_session(self, tmp_path):
+        """First hook call claims an unclaimed state file."""
+        proj, dot_claude = make_project(tmp_path)
+        write_state_file(dot_claude, 1, "task", 5)
+        assert read_state_file(dot_claude)["session_id"] is None
+
+        run_hook(proj, make_stop_event("progress", session_id="session-A"))
+
+        state = read_state_file(dot_claude)
+        assert state["session_id"] == "session-A"
+        assert state["iteration"] == 2
+
+    def test_other_session_ignored(self, tmp_path):
+        """Hook from a different session silently skips."""
+        proj, dot_claude = make_project(tmp_path)
+        write_state_file(dot_claude, 2, "task", 5, session_id="session-A")
+
+        decision = run_hook(proj, make_stop_event("progress", session_id="session-B"))
+
+        assert decision is None
+        state = read_state_file(dot_claude)
+        assert state["iteration"] == 2  # unchanged
+        assert state["session_id"] == "session-A"
+
+    def test_owning_session_proceeds(self, tmp_path):
+        """Hook from the owning session proceeds normally."""
+        proj, dot_claude = make_project(tmp_path)
+        write_state_file(dot_claude, 2, "task", 5, session_id="session-A")
+
+        decision = run_hook(proj, make_stop_event("progress", session_id="session-A"))
+
+        assert decision["decision"] == "block"
+        assert read_state_file(dot_claude)["iteration"] == 3
+
+    def test_other_session_cannot_complete(self, tmp_path):
+        """Another session's REVIEW_OKAY doesn't end the loop."""
+        proj, dot_claude = make_project(tmp_path)
+        write_state_file(dot_claude, 3, "task", 5, session_id="session-A")
+
+        decision = run_hook(proj, make_stop_event("REVIEW_OKAY", session_id="session-B"))
+
+        assert decision is None
+        assert read_state_file(dot_claude) is not None  # not deleted
+
+    def test_stop_works_regardless_of_session(self, tmp_path):
+        """The stop command deletes state regardless of session_id."""
+        proj, dot_claude = make_project(tmp_path)
+        write_state_file(dot_claude, 3, "task", 5, session_id="session-A")
+
+        result = run_main(proj, ["stop"])
+        assert result.returncode == 0
+        assert read_state_file(dot_claude) is None

@@ -57,8 +57,9 @@ def read_state_file():
         return json.load(path.open())
 
 
-def write_state_file(iteration, prompt, total=None, deadline=None):
-    json.dump({'iteration': iteration, 'prompt': prompt, 'total': total, 'deadline': deadline},
+def write_state_file(iteration, prompt, total=None, deadline=None, session_id=None):
+    json.dump({'iteration': iteration, 'prompt': prompt, 'total': total,
+               'deadline': deadline, 'session_id': session_id},
               state_file_path().open('w'))
 
 
@@ -100,6 +101,7 @@ def stop_hook(state, event):
     """Handle a stop hook for a persist session."""
     prompt = state['prompt']
     iteration = state['iteration'] + 1
+    session_id = state.get('session_id')
 
     last_msg = event.get('last_assistant_message', '')
     keyword = find_keyword(last_msg)
@@ -120,13 +122,15 @@ def stop_hook(state, event):
             "reason": f"Session complete ({reason}). Summarize what you accomplished.",
         }))
     elif keyword == 'TASK_COMPLETE':
-        write_state_file(iteration, prompt, total=state.get('total'), deadline=state.get('deadline'))
+        write_state_file(iteration, prompt, total=state.get('total'),
+                         deadline=state.get('deadline'), session_id=session_id)
         print(json.dumps({
             "decision": "block",
             "reason": VERIFICATION_PROMPT.format(prompt=prompt),
         }))
     else:
-        write_state_file(iteration, prompt, total=state.get('total'), deadline=state.get('deadline'))
+        write_state_file(iteration, prompt, total=state.get('total'),
+                         deadline=state.get('deadline'), session_id=session_id)
         print(json.dumps({
             "decision": "block",
             "reason": WORK_PROMPT.format(prompt=prompt, iteration=iteration),

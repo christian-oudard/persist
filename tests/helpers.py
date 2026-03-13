@@ -23,12 +23,13 @@ def read_state_file(dot_claude):
     return None
 
 
-def write_state_file(dot_claude, iteration, prompt, total=None, deadline=None):
+def write_state_file(dot_claude, iteration, prompt, total=None, deadline=None, session_id=None):
     (dot_claude / "persist.json").write_text(json.dumps({
         "iteration": iteration,
         "prompt": prompt,
         "total": total,
         "deadline": deadline,
+        "session_id": session_id,
     }))
 
 
@@ -80,9 +81,10 @@ def run_hook(cwd, event):
     return None
 
 
-def make_stop_event(last_msg=""):
+def make_stop_event(last_msg="", session_id="test-session"):
     return {
         "hook_event_name": "Stop",
         "transcript_path": "/dev/null",
         "last_assistant_message": last_msg,
+        "session_id": session_id,
     }
