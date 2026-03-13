@@ -62,6 +62,9 @@ def _stop(event):
 
     key, state = resolve_session(pid)
 
+    session_id = event.get('session_id')
+    print(f"_stop: pid={pid} key={key} session_id={session_id!r}", file=sys.stderr)
+
     if state is None:
         # After --continue: new PID, but session_id is preserved.
         session_id = event.get('session_id')
@@ -71,5 +74,12 @@ def _stop(event):
             return
         # Re-associate new PID with this session.
         associate(pid, session_id)
+        key = session_id
+    else:
+        # Migrate nonce → real session_id if not yet associated.
+        session_id = event.get('session_id')
+        if session_id and key != session_id:
+            associate(pid, session_id)
+            key = session_id
 
     stop_hook(key, state, event)
