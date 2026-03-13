@@ -2,8 +2,9 @@
 
 import json
 import sys
+import uuid
 
-from .common import dot_claude_dir, parse_limit, is_expired
+from .common import dot_claude_dir, parse_limit, is_expired, claude_pid
 
 WORK_PROMPT = """\
 # Iteration {iteration}
@@ -44,78 +45,106 @@ describe what remains before the keyword.
 """
 
 
-# --- State files ---
+# --- Database: persist.json ---
+#
+# Structure:
+#   {
+#     "pids": { "<claude_pid>": "<session_key>" },
+#     "sessions": { "<session_key>": { iteration, prompt, total, deadline } }
+#   }
+#
+# session_key is a nonce (from start()) until a hook associates it with
+# the real Claude session_id.
 
-def _state_path():
+def _db_path():
     d = dot_claude_dir()
     return d / 'persist.json' if d else None
 
 
-def _pending_path():
-    d = dot_claude_dir()
-    return d / 'persist-pending.json' if d else None
-
-
-def read_all_sessions():
-    path = _state_path()
+def _read_db():
+    path = _db_path()
     if path and path.exists():
-        return json.load(path.open())
-    return {}
+        data = json.load(path.open())
+        # Ensure both sections exist.
+        data.setdefault('pids', {})
+        data.setdefault('sessions', {})
+        return data
+    return {'pids': {}, 'sessions': {}}
 
 
-def _write_all_sessions(sessions):
-    path = _state_path()
-    if sessions:
-        json.dump(sessions, path.open('w'))
+def _write_db(db):
+    path = _db_path()
+    if db['sessions'] or db['pids']:
+        json.dump(db, path.open('w'))
     elif path and path.exists():
         path.unlink()
 
 
-def read_session(session_id):
-    return read_all_sessions().get(session_id)
+def resolve_session(pid):
+    """Look up a session by PID. Returns (session_key, state) or (None, None)."""
+    db = _read_db()
+    key = db['pids'].get(pid)
+    if key:
+        state = db['sessions'].get(key)
+        if state:
+            return key, state
+    return None, None
 
 
-def write_session(session_id, state):
-    sessions = read_all_sessions()
-    sessions[session_id] = state
-    _write_all_sessions(sessions)
+def resolve_by_session_id(session_id):
+    """Find a session by Claude session_id. Returns (session_key, state) or (None, None)."""
+    db = _read_db()
+    # Direct key match.
+    state = db['sessions'].get(session_id)
+    if state:
+        return session_id, state
+    return None, None
 
 
-def delete_session(session_id):
-    sessions = read_all_sessions()
-    sessions.pop(session_id, None)
-    _write_all_sessions(sessions)
+def associate(pid, session_id):
+    """Associate a PID with a Claude session_id.
 
-
-def read_pending():
-    path = _pending_path()
-    if path and path.exists():
-        return json.load(path.open())
-    return None
-
-
-def write_pending(state):
-    path = _pending_path()
-    json.dump(state, path.open('w'))
-
-
-def delete_pending():
-    path = _pending_path()
-    if path and path.exists():
-        path.unlink()
-
-
-def activate_pending(session_id):
-    """Promote pending session to persist.json under the given session_id.
-
-    Returns the activated state, or None if no pending session.
+    If the PID currently points to a nonce, migrates the session from
+    nonce to session_id.
     """
-    pending = read_pending()
-    if pending is None:
-        return None
-    delete_pending()
-    write_session(session_id, pending)
-    return pending
+    db = _read_db()
+    old_key = db['pids'].get(pid)
+
+    if old_key == session_id:
+        return  # Already associated.
+
+    if old_key and old_key in db['sessions']:
+        # Migrate: rename nonce → session_id.
+        db['sessions'][session_id] = db['sessions'].pop(old_key)
+        # Update any other PIDs pointing to the old nonce.
+        for p, k in db['pids'].items():
+            if k == old_key:
+                db['pids'][p] = session_id
+
+    db['pids'][pid] = session_id
+    _write_db(db)
+
+
+def write_session(key, state):
+    db = _read_db()
+    db['sessions'][key] = state
+    _write_db(db)
+
+
+def delete_session(key):
+    db = _read_db()
+    db['sessions'].pop(key, None)
+    # Clean up PID references to this key.
+    db['pids'] = {p: k for p, k in db['pids'].items() if k != key}
+    _write_db(db)
+
+
+def read_all_sessions():
+    return _read_db()['sessions']
+
+
+def read_session(key):
+    return _read_db()['sessions'].get(key)
 
 
 # --- Commands ---
@@ -136,37 +165,55 @@ def start():
         print("Usage: /persist LIMIT TASK", file=sys.stderr)
         sys.exit(1)
 
-    # Don't overwrite an active pending session.
-    if read_pending():
+    pid = claude_pid()
+    if not pid:
+        print("Could not find Claude Code process in process tree.",
+              file=sys.stderr)
+        sys.exit(1)
+
+    # Don't overwrite an active session.
+    if resolve_session(pid)[1]:
         return
 
     total, deadline = parse_limit(parts[0])
     prompt = parts[1]
-    write_pending({
+    nonce = uuid.uuid4().hex[:12]
+
+    db = _read_db()
+    db['pids'][pid] = nonce
+    db['sessions'][nonce] = {
         'iteration': 0, 'prompt': prompt,
         'total': total, 'deadline': deadline,
-    })
+    }
+    _write_db(db)
     print(WORK_PROMPT.format(prompt=prompt, iteration=1))
 
 
 def stop():
-    # Clear any pending session.
-    delete_pending()
-    # Without session_id, clear all sessions.
-    path = _state_path()
+    pid = claude_pid()
+    if pid:
+        key, _ = resolve_session(pid)
+        if key:
+            delete_session(key)
+            print('Session stopped.')
+            return
+    # Fallback: clear everything.
+    path = _db_path()
     if path and path.exists():
         path.unlink()
-    print('Session stopped.')
+    print('Session stopped (all sessions cleared).')
 
 
 def status():
-    pending = read_pending()
-    if pending:
+    pid = claude_pid()
+    if pid:
         from .common import format_remaining
-        print(f"Session pending (awaiting first stop hook)")
-        print(f"Task: {pending['prompt']}")
-        return
-    # Without session_id we can't look up a specific session; show all.
+        key, data = resolve_session(pid)
+        if data:
+            print(f"Session active: iteration {format_remaining(data)}")
+            print(f"Task: {data['prompt']}")
+            return
+    # Fallback: show all.
     sessions = read_all_sessions()
     if not sessions:
         print("No active session.")
@@ -177,7 +224,7 @@ def status():
         print(f"  Task: {data['prompt']}")
 
 
-def stop_hook(session_id, state, event):
+def stop_hook(key, state, event):
     """Handle a stop hook for a persist session."""
     prompt = state['prompt']
     iteration = state['iteration'] + 1
@@ -187,33 +234,33 @@ def stop_hook(session_id, state, event):
 
     expired = is_expired({**state, 'iteration': iteration})
 
+    def _updated():
+        return {
+            'iteration': iteration, 'prompt': prompt,
+            'total': state.get('total'), 'deadline': state.get('deadline'),
+        }
+
     if keyword == 'REVIEW_OKAY':
-        delete_session(session_id)
+        delete_session(key)
         print(json.dumps({
             "decision": "block",
             "reason": "Session complete (verified). Summarize what you accomplished.",
         }))
     elif expired:
-        delete_session(session_id)
+        delete_session(key)
         reason = 'time limit reached' if expired == 'deadline' else 'iterations exhausted'
         print(json.dumps({
             "decision": "block",
             "reason": f"Session complete ({reason}). Summarize what you accomplished.",
         }))
     elif keyword == 'TASK_COMPLETE':
-        write_session(session_id, {
-            'iteration': iteration, 'prompt': prompt,
-            'total': state.get('total'), 'deadline': state.get('deadline'),
-        })
+        write_session(key, _updated())
         print(json.dumps({
             "decision": "block",
             "reason": VERIFICATION_PROMPT.format(prompt=prompt),
         }))
     else:
-        write_session(session_id, {
-            'iteration': iteration, 'prompt': prompt,
-            'total': state.get('total'), 'deadline': state.get('deadline'),
-        })
+        write_session(key, _updated())
         print(json.dumps({
             "decision": "block",
             "reason": WORK_PROMPT.format(prompt=prompt, iteration=iteration),

@@ -1,7 +1,7 @@
 """Persistent coding sessions for Claude Code.
 
     persist              Start from /persist slash command
-    persist hook         Stop hook handler
+    persist hook         Hook handler (PreToolUse + Stop)
     persist stop         Cancel a running session
     persist status       Show session status
 """
@@ -9,12 +9,12 @@
 import json
 import sys
 
-from .common import parse_limit, is_expired, format_remaining  # noqa: F401
+from .common import parse_limit, is_expired, format_remaining, claude_pid  # noqa: F401
 from .session import (  # noqa: F401
     start, stop, status, stop_hook, find_keyword,
     read_all_sessions, read_session, write_session, delete_session,
-    read_pending, activate_pending,
-    _state_path, _pending_path,
+    resolve_session, resolve_by_session_id, associate,
+    _db_path,
 )
 
 
@@ -32,18 +32,44 @@ def main():
 
 def hook():
     event = json.loads(sys.stdin.read())
-    if event.get('hook_event_name') != 'Stop':
-        return
+    event_name = event.get('hook_event_name', '')
 
+    if event_name == 'PreToolUse':
+        _pre_tool_use(event)
+    elif event_name == 'Stop':
+        _stop(event)
+
+
+def _pre_tool_use(event):
+    """Associate the current PID with the Claude session_id."""
+    pid = claude_pid()
     session_id = event.get('session_id')
-    if not session_id:
+    if not pid or not session_id:
+        return
+    key, state = resolve_session(pid)
+    if not state:
+        return
+    # Already associated — nothing to do.
+    if key == session_id:
+        return
+    associate(pid, session_id)
+
+
+def _stop(event):
+    pid = claude_pid()
+    if not pid:
         return
 
-    # Check for a pending session (written by start() before session_id was known).
-    state = read_session(session_id)
-    if state is None:
-        state = activate_pending(session_id)
-    if state is None:
-        return
+    key, state = resolve_session(pid)
 
-    stop_hook(session_id, state, event)
+    if state is None:
+        # After --continue: new PID, but session_id is preserved.
+        session_id = event.get('session_id')
+        if session_id:
+            key, state = resolve_by_session_id(session_id)
+        if state is None:
+            return
+        # Re-associate new PID with this session.
+        associate(pid, session_id)
+
+    stop_hook(key, state, event)
