@@ -4,10 +4,10 @@ import json
 import sys
 import time
 
-from .common import dot_claude_dir, parse_limit, is_expired
+from .common import dot_claude_dir, parse_limit, is_expired, _format_duration
 
 WORK_PROMPT = """\
-# Iteration {iteration}
+# Iteration {iteration_label}
 
 You are in a persistent coding session. Orient yourself by reading files and \
 checking git status/log. Work incrementally: implement one piece, verify it \
@@ -43,6 +43,15 @@ describe what remains before the keyword.
 
 {prompt}
 """
+
+
+def _iteration_label(iteration, state):
+    """Format iteration label like '3' or '3, 12m'."""
+    started = state.get('started')
+    if started:
+        elapsed = time.time() - started
+        return f"{iteration}, {_format_duration(elapsed)}"
+    return str(iteration)
 
 
 # --- State file ---
@@ -157,8 +166,9 @@ def start():
     write_session(key, {
         'iteration': 0, 'prompt': prompt,
         'total': total, 'deadline': deadline,
+        'started': time.time(),
     })
-    print(WORK_PROMPT.format(prompt=prompt, iteration=1))
+    print(WORK_PROMPT.format(prompt=prompt, iteration_label="1"))
 
 
 def stop():
@@ -206,6 +216,7 @@ def stop_hook(session_id, state, event):
         write_session(session_id, {
             'iteration': iteration, 'prompt': prompt,
             'total': state.get('total'), 'deadline': state.get('deadline'),
+            'started': state.get('started'),
         })
         print(json.dumps({
             "decision": "block",
@@ -215,10 +226,11 @@ def stop_hook(session_id, state, event):
         write_session(session_id, {
             'iteration': iteration, 'prompt': prompt,
             'total': state.get('total'), 'deadline': state.get('deadline'),
+            'started': state.get('started'),
         })
         print(json.dumps({
             "decision": "block",
-            "reason": WORK_PROMPT.format(prompt=prompt, iteration=iteration),
+            "reason": WORK_PROMPT.format(prompt=prompt, iteration_label=_iteration_label(iteration, state)),
         }))
 
 

@@ -211,6 +211,14 @@ class TestStart:
         assert data["deadline"] is not None
         assert data["deadline"] > time.time()
 
+    def test_start_records_started_time(self, tmp_path):
+        proj, dot_claude = make_project(tmp_path)
+        before = time.time()
+        run_start(proj, "5 Do stuff")
+        data = read_session(dot_claude, "unclaimed_1")
+        assert data["started"] is not None
+        assert before <= data["started"] <= time.time()
+
     def test_status_active(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
         write_session(dot_claude, "csid-1", 3, "Fix the bug", 5)
@@ -573,6 +581,75 @@ class TestBlockSelfStop:
 
 
 # --- Session isolation tests (continued) ---
+
+class TestStartedField:
+    def test_started_preserved_through_iterations(self, tmp_path):
+        """started timestamp survives stop_hook state updates."""
+        proj, dot_claude = make_project(tmp_path)
+        started = time.time() - 3600  # 1 hour ago
+        write_session(dot_claude, "csid-1", 2, "Do stuff", total=5,
+                      started=started)
+
+        run_hook(proj, make_stop_event("Progress.", session_id="csid-1"))
+        data = read_session(dot_claude, "csid-1")
+        assert data["started"] == started
+        assert data["iteration"] == 3
+
+    def test_elapsed_time_in_work_prompt(self, tmp_path):
+        """Work prompt shows elapsed time when started is set."""
+        proj, dot_claude = make_project(tmp_path)
+        started = time.time() - 5400  # 1h30m ago
+        write_session(dot_claude, "csid-1", 2, "Do stuff", total=10,
+                      started=started)
+
+        decision = run_hook(proj, make_stop_event("Progress.",
+                                                   session_id="csid-1"))
+        assert "Iteration 3, 1h" in decision["reason"]
+
+    def test_started_preserved_through_task_complete(self, tmp_path):
+        """started preserved when TASK_COMPLETE triggers verification."""
+        proj, dot_claude = make_project(tmp_path)
+        started = time.time() - 1800
+        write_session(dot_claude, "csid-1", 2, "Build it", total=5,
+                      started=started)
+
+        run_hook(proj, make_stop_event("Done! TASK_COMPLETE",
+                                       session_id="csid-1"))
+        data = read_session(dot_claude, "csid-1")
+        assert data["started"] == started
+
+
+class TestFormatRemaining:
+    def test_iteration_based(self):
+        assert persist.format_remaining({"iteration": 3, "total": 5}) == "3/5"
+
+    def test_deadline_with_started(self):
+        now = time.time()
+        result = persist.format_remaining({
+            "iteration": 2,
+            "deadline": now + 3600,
+            "started": now - 3600,
+        })
+        # Should show elapsed/total like "2, 1h00m/2h00m"
+        assert "2, " in result
+        assert "/" in result
+        assert "remaining" not in result
+
+    def test_deadline_without_started(self):
+        result = persist.format_remaining({
+            "iteration": 2,
+            "deadline": time.time() + 3600,
+        })
+        assert "remaining" in result
+
+    def test_deadline_expired(self):
+        result = persist.format_remaining({
+            "iteration": 5,
+            "deadline": time.time() - 100,
+            "started": time.time() - 7300,
+        })
+        assert "expired" in result
+
 
 class TestSessionContinuation:
     def test_continue_after_restart(self, tmp_path):

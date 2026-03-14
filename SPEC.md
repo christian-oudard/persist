@@ -33,10 +33,12 @@ Every session is scoped to a Claude Code session_id. This prevents cross-session
 
 ```json
 {
-  "unclaimed_1": {"iteration": 0, "prompt": "Fix the parser", "total": 5, "deadline": null},
-  "abc-123": {"iteration": 3, "prompt": "Add tests", "total": 10, "deadline": null}
+  "unclaimed_1": {"iteration": 0, "prompt": "Fix the parser", "total": 5, "deadline": null, "started": 1710400000.0},
+  "abc-123": {"iteration": 3, "prompt": "Add tests", "total": 10, "deadline": null, "started": 1710399000.0}
 }
 ```
+
+Fields: `iteration` (int), `prompt` (str), `total` (int or null), `deadline` (float or null), `started` (float — Unix timestamp when session began). Exactly one of `total` or `deadline` is non-null. `started` is used to compute elapsed/total duration for statusline display.
 
 ## Hooks
 

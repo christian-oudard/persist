@@ -33,7 +33,7 @@ def read_session(dot_claude, session_id):
 
 
 def write_session(dot_claude, session_id, iteration, prompt, total=None,
-                  deadline=None):
+                  deadline=None, started=None):
     """Write a session entry to persist.json."""
     state_file = dot_claude / "persist.json"
     data = {}
@@ -44,11 +44,12 @@ def write_session(dot_claude, session_id, iteration, prompt, total=None,
         "prompt": prompt,
         "total": total,
         "deadline": deadline,
+        "started": started,
     }
     state_file.write_text(json.dumps(data))
 
 
-def write_unclaimed(dot_claude, prompt, total=None, deadline=None):
+def write_unclaimed(dot_claude, prompt, total=None, deadline=None, started=None):
     """Write an unclaimed entry, returning the key used."""
     state_file = dot_claude / "persist.json"
     data = {}
@@ -63,6 +64,7 @@ def write_unclaimed(dot_claude, prompt, total=None, deadline=None):
         "prompt": prompt,
         "total": total,
         "deadline": deadline,
+        "started": started,
     }
     state_file.write_text(json.dumps(data))
     return key

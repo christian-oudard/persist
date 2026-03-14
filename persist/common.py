@@ -90,21 +90,33 @@ def is_expired(data):
     return None
 
 
+def _format_duration(seconds):
+    """Format a duration in seconds as e.g. '2h30m' or '45m'."""
+    seconds = max(0, int(seconds))
+    hours, rem = divmod(seconds, 3600)
+    minutes = rem // 60
+    if hours > 0:
+        return f"{hours}h{minutes:02d}m"
+    return f"{minutes}m"
+
+
 def format_remaining(data):
     """Format the remaining limit for status display."""
     iteration = data.get('iteration', '?')
     deadline = data.get('deadline')
     if deadline:
-        remaining = deadline - time.time()
-        dt = datetime.fromtimestamp(deadline)
-        clock = dt.strftime('%H:%M')
+        now = time.time()
+        started = data.get('started')
+        remaining = deadline - now
         if remaining <= 0:
+            dt = datetime.fromtimestamp(deadline)
+            clock = dt.strftime('%H:%M')
             return f"{iteration}, until {clock} (expired)"
-        hours, rem = divmod(int(remaining), 3600)
-        minutes = rem // 60
-        if hours > 0:
-            return f"{iteration}, until {clock} ({hours}h {minutes}m remaining)"
-        return f"{iteration}, until {clock} ({minutes}m remaining)"
+        if started:
+            elapsed = now - started
+            total_duration = deadline - started
+            return f"{iteration}, {_format_duration(elapsed)}/{_format_duration(total_duration)}"
+        return f"{iteration}, {_format_duration(remaining)} remaining"
     total = data.get('total')
     if total:
         return f"{iteration}/{total}"
