@@ -152,6 +152,7 @@ def start():
 
     total, deadline = parse_limit(parts[0])
     prompt = parts[1]
+    _write_all_sessions({})
     key = next_unclaimed_key()
     write_session(key, {
         'iteration': 0, 'prompt': prompt,

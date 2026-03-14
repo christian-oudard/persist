@@ -141,12 +141,22 @@ class TestStart:
         run_start(proj, "5 task")
         assert read_session(dot_claude, "unclaimed_1") is not None
 
-    def test_multiple_starts_create_sequential_keys(self, tmp_path):
+    def test_start_replaces_existing_unclaimed(self, tmp_path):
+        """Starting a new task should clear any previous unclaimed entries."""
         proj, dot_claude = make_project(tmp_path)
         run_start(proj, "5 task A")
         run_start(proj, "3 task B")
-        assert read_session(dot_claude, "unclaimed_1")["prompt"] == "task A"
-        assert read_session(dot_claude, "unclaimed_2")["prompt"] == "task B"
+        # task B should be the only entry
+        assert read_session(dot_claude, "unclaimed_1")["prompt"] == "task B"
+        assert read_session(dot_claude, "unclaimed_2") is None
+
+    def test_start_replaces_claimed_session(self, tmp_path):
+        """Starting a new task should clear previously claimed sessions too."""
+        proj, dot_claude = make_project(tmp_path)
+        write_session(dot_claude, "csid-1", 3, "old task", 5)
+        run_start(proj, "3 new task")
+        assert read_session(dot_claude, "csid-1") is None
+        assert read_session(dot_claude, "unclaimed_1")["prompt"] == "new task"
 
     def test_multiline_task(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
