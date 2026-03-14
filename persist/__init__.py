@@ -63,7 +63,6 @@ def _stop(event):
     key, state = resolve_session(pid)
 
     session_id = event.get('session_id')
-    print(f"_stop: pid={pid} key={key} session_id={session_id!r}", file=sys.stderr)
 
     if state is None:
         # After --continue: new PID, but session_id is preserved.
