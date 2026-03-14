@@ -29,14 +29,13 @@
       };
 
       # Ready-made nix-claude plugin config
-      plugin = eachSystem (system:
-        let pkg = self.packages.${system}.default; in {
+      plugin = eachSystem (system: {
           description = "Persistent coding sessions for Claude Code";
           skills = builtins.attrValues self.skills;
-          package = pkg;
+          package = self.packages.${system}.default;
           settings.hooks.Stop = [{
             matcher = "";
-            hooks = [{ type = "command"; command = "${pkg}/bin/persist hook"; }];
+            hooks = [{ type = "command"; command = "persist hook"; }];
           }];
         });
     };
