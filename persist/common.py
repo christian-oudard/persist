@@ -1,38 +1,10 @@
 """Shared utilities for persist."""
 
-import os
 import re
 import sys
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
-
-
-def claude_pid():
-    """Identify the current Claude Code session.
-
-    Uses the PID of the ancestor Claude Code process, found by walking
-    /proc. Both ! blocks and hook subprocesses are descendants of the
-    same process, so this returns a stable, unique-per-session key.
-
-    Falls back to PERSIST_SESSION_ID env var (for tests or non-Linux).
-    """
-    override = os.environ.get('PERSIST_SESSION_ID')
-    if override:
-        return override
-    pid = os.getpid()
-    while pid > 1:
-        try:
-            with open(f'/proc/{pid}/comm') as f:
-                comm = f.read().strip()
-            if 'claude' in comm:
-                return str(pid)
-            with open(f'/proc/{pid}/stat') as f:
-                ppid = int(f.read().split()[3])
-            pid = ppid
-        except (FileNotFoundError, IndexError, ValueError):
-            break
-    return None
 
 
 def dot_claude_dir():

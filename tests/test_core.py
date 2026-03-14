@@ -10,10 +10,10 @@ sys.path.insert(0, str(Path(__file__).parent))
 import persist
 
 from helpers import (
-    make_project, read_db, read_session, read_pid, session_for_pid,
-    write_session,
+    make_project, read_state_file, read_session, write_session,
+    write_unclaimed, make_transcript,
     run_main, run_start, run_status, run_hook, run_persist,
-    make_stop_event, make_pretooluse_event, DEFAULT_PID,
+    make_stop_event,
 )
 
 
@@ -121,7 +121,7 @@ class TestStart:
         proj, dot_claude = make_project(tmp_path)
         result = run_start(proj, "5 Fix the bug")
         assert result.returncode == 0
-        state = session_for_pid(dot_claude, DEFAULT_PID)
+        state = read_session(dot_claude, "unclaimed_1")
         assert state["iteration"] == 0
         assert state["prompt"] == "Fix the bug"
         assert state["total"] == 5
@@ -132,32 +132,37 @@ class TestStart:
         assert "Iteration 1" in result.stdout
         assert "Do stuff" in result.stdout
 
-    def test_start_creates_nonce_key(self, tmp_path):
+    def test_start_creates_unclaimed_key(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
         run_start(proj, "5 task")
-        key = read_pid(dot_claude, DEFAULT_PID)
-        assert key is not None
-        assert len(key) == 12  # hex nonce
+        assert read_session(dot_claude, "unclaimed_1") is not None
+
+    def test_multiple_starts_create_sequential_keys(self, tmp_path):
+        proj, dot_claude = make_project(tmp_path)
+        run_start(proj, "5 task A")
+        run_start(proj, "3 task B")
+        assert read_session(dot_claude, "unclaimed_1")["prompt"] == "task A"
+        assert read_session(dot_claude, "unclaimed_2")["prompt"] == "task B"
 
     def test_multiline_task(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
         run_start(proj, "3 Fix the bug.\nAlso update tests.")
-        assert session_for_pid(dot_claude, DEFAULT_PID)["prompt"] == "Fix the bug.\nAlso update tests."
+        assert read_session(dot_claude, "unclaimed_1")["prompt"] == "Fix the bug.\nAlso update tests."
 
     def test_curly_braces(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
         run_start(proj, "2 Fix the {name} field")
-        assert session_for_pid(dot_claude, DEFAULT_PID)["prompt"] == "Fix the {name} field"
+        assert read_session(dot_claude, "unclaimed_1")["prompt"] == "Fix the {name} field"
 
     def test_shell_metacharacters(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
         run_start(proj, "1 echo $HOME && rm -rf /; don't")
-        assert session_for_pid(dot_claude, DEFAULT_PID)["prompt"] == "echo $HOME && rm -rf /; don't"
+        assert read_session(dot_claude, "unclaimed_1")["prompt"] == "echo $HOME && rm -rf /; don't"
 
     def test_quotes(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
         run_start(proj, """2 Fix the "parser" and it's 'edge cases'""")
-        assert session_for_pid(dot_claude, DEFAULT_PID)["prompt"] == """Fix the "parser" and it's 'edge cases'"""
+        assert read_session(dot_claude, "unclaimed_1")["prompt"] == """Fix the "parser" and it's 'edge cases'"""
 
     def test_no_project_root(self, tmp_path):
         result = run_start(tmp_path, "3 Do stuff")
@@ -182,18 +187,11 @@ class TestStart:
         assert result.returncode == 1
         assert "Usage" in result.stderr
 
-    def test_no_overwrite_active(self, tmp_path):
-        """start() is a no-op if a session is already active."""
-        proj, dot_claude = make_project(tmp_path)
-        write_session(dot_claude, DEFAULT_PID, "old-key", 2, "old task", total=5)
-        run_start(proj, "10 New task")
-        assert session_for_pid(dot_claude, DEFAULT_PID)["prompt"] == "old task"
-
     def test_time_limit_start(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
         result = run_start(proj, "2h Fix the bug")
         assert result.returncode == 0
-        data = session_for_pid(dot_claude, DEFAULT_PID)
+        data = read_session(dot_claude, "unclaimed_1")
         assert data["prompt"] == "Fix the bug"
         assert data["total"] is None
         assert data["deadline"] is not None
@@ -201,7 +199,7 @@ class TestStart:
 
     def test_status_active(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
-        write_session(dot_claude, DEFAULT_PID, "key-1", 3, "Fix the bug", 5)
+        write_session(dot_claude, "csid-1", 3, "Fix the bug", 5)
         result = run_status(proj)
         assert result.returncode == 0
         assert "Fix the bug" in result.stdout
@@ -213,34 +211,76 @@ class TestStart:
         assert "No active session" in result.stdout
 
 
-# --- Integration tests: PreToolUse association ---
+# --- Integration tests: transcript claiming ---
 
-class TestPreToolUseAssociation:
-    def test_associates_pid_with_session_id(self, tmp_path):
+class TestTranscriptClaiming:
+    def test_claims_unclaimed_by_transcript(self, tmp_path):
+        """Stop hook claims unclaimed entry when prompt found in transcript."""
         proj, dot_claude = make_project(tmp_path)
-        run_start(proj, "5 task")
-        nonce = read_pid(dot_claude, DEFAULT_PID)
-        assert nonce is not None
+        key = write_unclaimed(dot_claude, "Fix the parser", total=5)
 
-        # PreToolUse fires → associates nonce with real session_id
-        run_hook(proj, make_pretooluse_event("csid-abc"))
-        assert read_pid(dot_claude, DEFAULT_PID) == "csid-abc"
-        # Session migrated from nonce to session_id
-        assert read_session(dot_claude, nonce) is None
-        assert read_session(dot_claude, "csid-abc")["prompt"] == "task"
+        transcript = tmp_path / "transcript.jsonl"
+        make_transcript(transcript, ["/persist 5 Fix the parser"])
 
-    def test_no_session_no_association(self, tmp_path):
-        """PreToolUse with no active session is a no-op."""
+        event = make_stop_event("Making progress.", session_id="csid-1",
+                                transcript_path=str(transcript))
+        decision = run_hook(proj, event)
+
+        assert decision["decision"] == "block"
+        assert read_session(dot_claude, "csid-1")["iteration"] == 1
+        assert read_session(dot_claude, key) is None
+
+    def test_ignores_unclaimed_without_matching_prompt(self, tmp_path):
+        """Stop hook ignores unclaimed entry when prompt NOT in transcript."""
         proj, dot_claude = make_project(tmp_path)
-        run_hook(proj, make_pretooluse_event("csid-abc"))
-        assert read_db(dot_claude) is None
+        write_unclaimed(dot_claude, "Fix the parser", total=5)
 
-    def test_already_associated(self, tmp_path):
-        """PreToolUse is idempotent after association."""
+        transcript = tmp_path / "transcript.jsonl"
+        make_transcript(transcript, ["Something completely different"])
+
+        event = make_stop_event("Making progress.", session_id="csid-1",
+                                transcript_path=str(transcript))
+        decision = run_hook(proj, event)
+        assert decision is None
+        assert read_session(dot_claude, "unclaimed_1") is not None
+
+    def test_distinguishes_two_unclaimed_by_prompt(self, tmp_path):
+        """Two unclaimed entries: only the matching one gets claimed."""
         proj, dot_claude = make_project(tmp_path)
-        write_session(dot_claude, DEFAULT_PID, "csid-abc", 2, "task", 5)
-        run_hook(proj, make_pretooluse_event("csid-abc"))
-        assert read_session(dot_claude, "csid-abc")["iteration"] == 2
+        write_unclaimed(dot_claude, "Fix the parser", total=5)
+        write_unclaimed(dot_claude, "Add tests", total=3)
+
+        transcript = tmp_path / "transcript.jsonl"
+        make_transcript(transcript, ["/persist 3 Add tests"])
+
+        event = make_stop_event("Started testing.", session_id="csid-1",
+                                transcript_path=str(transcript))
+        decision = run_hook(proj, event)
+
+        assert decision["decision"] == "block"
+        assert read_session(dot_claude, "csid-1")["prompt"] == "Add tests"
+        assert read_session(dot_claude, "unclaimed_1")["prompt"] == "Fix the parser"
+
+    def test_fast_path_already_claimed(self, tmp_path):
+        """Already-claimed session matched by session_id directly."""
+        proj, dot_claude = make_project(tmp_path)
+        write_session(dot_claude, "csid-1", 2, "Fix the parser", 5)
+
+        event = make_stop_event("Making progress.", session_id="csid-1")
+        decision = run_hook(proj, event)
+
+        assert decision["decision"] == "block"
+        assert read_session(dot_claude, "csid-1")["iteration"] == 3
+
+    def test_no_transcript_path_no_claim(self, tmp_path):
+        """Without transcript_path, unclaimed entries can't be claimed."""
+        proj, dot_claude = make_project(tmp_path)
+        write_unclaimed(dot_claude, "Fix the parser", total=5)
+
+        # /dev/null won't contain the prompt
+        event = make_stop_event("Progress.", session_id="csid-1")
+        decision = run_hook(proj, event)
+        assert decision is None
 
 
 # --- Integration tests: hook state machine ---
@@ -248,49 +288,54 @@ class TestPreToolUseAssociation:
 class TestHookStateMachine:
     def test_normal_continuation(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
-        write_session(dot_claude, DEFAULT_PID, "key-1", 1, "Do the thing", 5)
+        write_session(dot_claude, "csid-1", 1, "Do the thing", 5)
 
-        decision = run_hook(proj, make_stop_event("Made some progress."))
+        decision = run_hook(proj, make_stop_event("Made some progress.",
+                                                   session_id="csid-1"))
 
         assert decision["decision"] == "block"
-        assert read_session(dot_claude, "key-1")["iteration"] == 2
+        assert read_session(dot_claude, "csid-1")["iteration"] == 2
 
     def test_task_complete_triggers_verification(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
-        write_session(dot_claude, DEFAULT_PID, "key-1", 2, "Build feature X", 5)
+        write_session(dot_claude, "csid-1", 2, "Build feature X", 5)
 
-        decision = run_hook(proj, make_stop_event("Done! TASK_COMPLETE"))
+        decision = run_hook(proj, make_stop_event("Done! TASK_COMPLETE",
+                                                   session_id="csid-1"))
 
         assert decision["decision"] == "block"
         assert "Verification" in decision["reason"]
 
     def test_review_okay_ends_session(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
-        write_session(dot_claude, DEFAULT_PID, "key-1", 3, "Build feature X", 5)
+        write_session(dot_claude, "csid-1", 3, "Build feature X", 5)
 
-        decision = run_hook(proj, make_stop_event("Everything looks good. REVIEW_OKAY"))
+        decision = run_hook(proj, make_stop_event("Everything looks good. REVIEW_OKAY",
+                                                   session_id="csid-1"))
 
         assert decision["decision"] == "block"
         assert "verified" in decision["reason"].lower()
-        assert read_session(dot_claude, "key-1") is None
+        assert read_session(dot_claude, "csid-1") is None
 
     def test_review_incomplete_continues(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
-        write_session(dot_claude, DEFAULT_PID, "key-1", 3, "Build feature X", 5)
+        write_session(dot_claude, "csid-1", 3, "Build feature X", 5)
 
-        decision = run_hook(proj, make_stop_event("Found a bug. REVIEW_INCOMPLETE"))
+        decision = run_hook(proj, make_stop_event("Found a bug. REVIEW_INCOMPLETE",
+                                                   session_id="csid-1"))
 
         assert decision["decision"] == "block"
-        assert read_session(dot_claude, "key-1")["iteration"] == 4
+        assert read_session(dot_claude, "csid-1")["iteration"] == 4
 
     def test_iterations_exhausted(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
-        write_session(dot_claude, DEFAULT_PID, "key-1", 3, "Do stuff", 3)
+        write_session(dot_claude, "csid-1", 3, "Do stuff", 3)
 
-        decision = run_hook(proj, make_stop_event("Still working..."))
+        decision = run_hook(proj, make_stop_event("Still working...",
+                                                   session_id="csid-1"))
 
         assert "exhausted" in decision["reason"].lower()
-        assert read_session(dot_claude, "key-1") is None
+        assert read_session(dot_claude, "csid-1") is None
 
     def test_no_state_silent(self, tmp_path):
         proj, _ = make_project(tmp_path)
@@ -299,78 +344,87 @@ class TestHookStateMachine:
 
     def test_non_stop_event_ignored(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
-        write_session(dot_claude, DEFAULT_PID, "key-1", 3, "task", 5)
+        write_session(dot_claude, "csid-1", 3, "task", 5)
 
-        decision = run_hook(proj, {"hook_event_name": "NotStop", "last_assistant_message": ""})
+        decision = run_hook(proj, {"hook_event_name": "NotStop",
+                                    "last_assistant_message": ""})
         assert decision is None
-        assert read_session(dot_claude, "key-1")["iteration"] == 3
+        assert read_session(dot_claude, "csid-1")["iteration"] == 3
 
     def test_curly_braces_in_prompt(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
-        write_session(dot_claude, DEFAULT_PID, "key-1", 2, "Fix the {name} field", 5)
-        decision = run_hook(proj, make_stop_event("Working on it."))
+        write_session(dot_claude, "csid-1", 2, "Fix the {name} field", 5)
+        decision = run_hook(proj, make_stop_event("Working on it.",
+                                                   session_id="csid-1"))
         assert "Fix the {name} field" in decision["reason"]
 
     def test_curly_braces_in_verification(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
-        write_session(dot_claude, DEFAULT_PID, "key-1", 2, "Update {foo} and {bar}", 5)
-        decision = run_hook(proj, make_stop_event("Done! TASK_COMPLETE"))
+        write_session(dot_claude, "csid-1", 2, "Update {foo} and {bar}", 5)
+        decision = run_hook(proj, make_stop_event("Done! TASK_COMPLETE",
+                                                   session_id="csid-1"))
         assert "Update {foo} and {bar}" in decision["reason"]
 
     def test_multiline_prompt_in_hook(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
         task = "Step 1: fix parsing.\nStep 2: add tests.\nStep 3: deploy."
-        write_session(dot_claude, DEFAULT_PID, "key-1", 2, task, 5)
-        decision = run_hook(proj, make_stop_event("Progress made."))
+        write_session(dot_claude, "csid-1", 2, task, 5)
+        decision = run_hook(proj, make_stop_event("Progress made.",
+                                                   session_id="csid-1"))
         assert task in decision["reason"]
 
     def test_full_lifecycle(self, tmp_path):
-        """Full start -> associate -> hook -> ... -> done."""
+        """Full start -> claim via transcript -> hook -> ... -> done."""
         proj, dot_claude = make_project(tmp_path)
 
-        # 1. Start: writes session under nonce
+        # 1. Start: writes session under unclaimed key
         result = run_start(proj, "5 Create hello.txt")
         assert result.returncode == 0
-        nonce = read_pid(dot_claude, DEFAULT_PID)
-        assert session_for_pid(dot_claude, DEFAULT_PID)["iteration"] == 0
+        assert read_session(dot_claude, "unclaimed_1")["iteration"] == 0
 
-        # 2. PreToolUse: associates nonce → csid-1
-        run_hook(proj, make_pretooluse_event("csid-1"))
-        assert read_pid(dot_claude, DEFAULT_PID) == "csid-1"
+        # 2. First Stop: claims via transcript, iteration 1
+        transcript = tmp_path / "transcript.jsonl"
+        make_transcript(transcript, ["/persist 5 Create hello.txt"])
 
-        # 3. First Stop: iteration 1
-        d = run_hook(proj, make_stop_event("Starting work."))
+        d = run_hook(proj, make_stop_event("Starting work.", session_id="csid-1",
+                                            transcript_path=str(transcript)))
         assert d["decision"] == "block"
         assert read_session(dot_claude, "csid-1")["iteration"] == 1
+        assert read_session(dot_claude, "unclaimed_1") is None
 
-        # 4. Second Stop: iteration 2
-        d = run_hook(proj, make_stop_event("Created the file."))
+        # 3. Second Stop: fast path by session_id, iteration 2
+        d = run_hook(proj, make_stop_event("Created the file.",
+                                            session_id="csid-1"))
         assert read_session(dot_claude, "csid-1")["iteration"] == 2
 
-        # 5. TASK_COMPLETE -> verification
-        d = run_hook(proj, make_stop_event("All done. TASK_COMPLETE"))
+        # 4. TASK_COMPLETE -> verification
+        d = run_hook(proj, make_stop_event("All done. TASK_COMPLETE",
+                                            session_id="csid-1"))
         assert "Verification" in d["reason"]
 
-        # 6. REVIEW_OKAY -> session ends
-        d = run_hook(proj, make_stop_event("Verified. REVIEW_OKAY"))
+        # 5. REVIEW_OKAY -> session ends
+        d = run_hook(proj, make_stop_event("Verified. REVIEW_OKAY",
+                                            session_id="csid-1"))
         assert "verified" in d["reason"].lower()
         assert read_session(dot_claude, "csid-1") is None
 
     def test_deadline_expired_ends_session(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
-        write_session(dot_claude, DEFAULT_PID, "key-1", 2, "Do stuff",
+        write_session(dot_claude, "csid-1", 2, "Do stuff",
                       deadline=time.time() - 1)
-        decision = run_hook(proj, make_stop_event("Still working..."))
+        decision = run_hook(proj, make_stop_event("Still working...",
+                                                   session_id="csid-1"))
         assert "time limit" in decision["reason"].lower()
-        assert read_session(dot_claude, "key-1") is None
+        assert read_session(dot_claude, "csid-1") is None
 
     def test_deadline_not_expired_continues(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
-        write_session(dot_claude, DEFAULT_PID, "key-1", 2, "Do stuff",
+        write_session(dot_claude, "csid-1", 2, "Do stuff",
                       deadline=time.time() + 3600)
-        decision = run_hook(proj, make_stop_event("Making progress."))
+        decision = run_hook(proj, make_stop_event("Making progress.",
+                                                   session_id="csid-1"))
         assert "Iteration" in decision["reason"]
-        assert read_session(dot_claude, "key-1")["iteration"] == 3
+        assert read_session(dot_claude, "csid-1")["iteration"] == 3
 
 
 # --- Session isolation tests ---
@@ -378,71 +432,39 @@ class TestHookStateMachine:
 class TestSessionIsolation:
     def test_different_sessions_coexist(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
-        write_session(dot_claude, "pid-A", "csid-A", 2, "task A", 5)
-        write_session(dot_claude, "pid-B", "csid-B", 1, "task B", 3)
+        write_session(dot_claude, "csid-A", 2, "task A", 5)
+        write_session(dot_claude, "csid-B", 1, "task B", 3)
 
-        run_hook(proj, make_stop_event("progress"), pid="pid-A")
+        run_hook(proj, make_stop_event("progress", session_id="csid-A"))
         assert read_session(dot_claude, "csid-A")["iteration"] == 3
         assert read_session(dot_claude, "csid-B")["iteration"] == 1
 
     def test_other_session_untouched(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
-        write_session(dot_claude, "pid-A", "csid-A", 2, "task", 5)
-        # pid-B has no session — hook is silent
-        decision = run_hook(proj, make_stop_event("progress"), pid="pid-B")
+        write_session(dot_claude, "csid-A", 2, "task", 5)
+        # csid-B has no session — hook is silent
+        decision = run_hook(proj, make_stop_event("progress",
+                                                   session_id="csid-B"))
         assert decision is None
         assert read_session(dot_claude, "csid-A")["iteration"] == 2
 
     def test_session_end_preserves_other(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
-        write_session(dot_claude, "pid-A", "csid-A", 3, "task A", 3)
-        write_session(dot_claude, "pid-B", "csid-B", 1, "task B", 5)
+        write_session(dot_claude, "csid-A", 3, "task A", 3)
+        write_session(dot_claude, "csid-B", 1, "task B", 5)
 
-        decision = run_hook(proj, make_stop_event("done"), pid="pid-A")
+        decision = run_hook(proj, make_stop_event("done", session_id="csid-A"))
         assert "exhausted" in decision["reason"].lower()
         assert read_session(dot_claude, "csid-A") is None
         assert read_session(dot_claude, "csid-B")["iteration"] == 1
 
-    def test_start_different_sessions(self, tmp_path):
-        """Two sessions can start independently."""
-        proj, dot_claude = make_project(tmp_path)
-        run_start(proj, "5 task A", pid="pid-A")
-        run_start(proj, "3 task B", pid="pid-B")
-        assert session_for_pid(dot_claude, "pid-A")["prompt"] == "task A"
-        assert session_for_pid(dot_claude, "pid-B")["prompt"] == "task B"
-
     def test_continue_after_restart(self, tmp_path):
-        """--continue spawns new PID but same session_id survives."""
+        """--continue spawns new process but same session_id survives."""
         proj, dot_claude = make_project(tmp_path)
+        write_session(dot_claude, "csid-1", 2, "Build feature", 5)
 
-        # Original: pid-1, associated with csid-1
-        write_session(dot_claude, "pid-1", "csid-1", 2, "Build feature", 5)
-
-        # After restart: new pid-2, Stop hook with same session_id
-        decision = run_hook(proj, make_stop_event("More progress.", session_id="csid-1"),
-                            pid="pid-2")
+        # After restart, Stop hook with same session_id
+        decision = run_hook(proj, make_stop_event("More progress.",
+                                                   session_id="csid-1"))
         assert decision["decision"] == "block"
-        # Session now accessible via pid-2
         assert read_session(dot_claude, "csid-1")["iteration"] == 3
-
-    def test_continue_before_any_stop(self, tmp_path):
-        """Kill and --continue before any Stop hook fires.
-
-        start() creates a nonce. PreToolUse associates it with session_id.
-        After restart, Stop hook finds it by session_id.
-        """
-        proj, dot_claude = make_project(tmp_path)
-
-        # pid-1: start creates nonce
-        run_start(proj, "5 Build feature", pid="pid-1")
-        nonce = read_pid(dot_claude, "pid-1")
-
-        # PreToolUse fires on pid-1: associates nonce → csid-1
-        run_hook(proj, make_pretooluse_event("csid-1"), pid="pid-1")
-        assert read_session(dot_claude, "csid-1")["iteration"] == 0
-
-        # Kill, --continue with pid-2. Stop hook finds csid-1.
-        decision = run_hook(proj, make_stop_event("Started work.", session_id="csid-1"),
-                            pid="pid-2")
-        assert decision["decision"] == "block"
-        assert read_session(dot_claude, "csid-1")["iteration"] == 1

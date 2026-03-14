@@ -25,31 +25,22 @@ The session ends when any termination condition is met: iteration limit, deadlin
 
 Every session is scoped to a Claude Code session_id. This prevents cross-session pollution when multiple agents share a project.
 
-### persist-session file
-
-`.claude/persist-session` is a transient file used to pass the session_id from the PreToolUse hook to the CLI. The hook writes it; the CLI reads and deletes it.
-
-The PreToolUse hook (matched on Bash) fires before every Bash tool call. When the command starts with `persist`, the hook writes the event's session_id to `.claude/persist-session`. Because PreToolUse runs synchronously before the tool executes, the file is guaranteed to exist when the persist CLI reads it.
+`start()` writes the session under a placeholder key (`unclaimed_1`, `unclaimed_2`, etc.) since no session_id is available at start time. The first Stop hook claims the entry by reading the transcript JSONL and matching the task prompt. Subsequent Stop hooks match by session_id directly (fast path).
 
 ### persist.json
 
-`.claude/persist.json` is keyed by session_id at the top level:
+`.claude/persist.json` is a flat dict keyed by session_id (or placeholder for unclaimed entries):
 
 ```json
 {
-  "abc-123": {"iteration": 2, "prompt": "Fix the parser", "total": 5, "deadline": null},
-  "def-456": {"iteration": 1, "prompt": "Add tests", "total": null, "deadline": 1709413200}
+  "unclaimed_1": {"iteration": 0, "prompt": "Fix the parser", "total": 5, "deadline": null},
+  "abc-123": {"iteration": 3, "prompt": "Add tests", "total": 10, "deadline": null}
 }
 ```
 
-persist.json is never written without a session_id. The stop hook looks up the session by the event's session_id directly — no file-based handoff needed since the event already carries it.
-
 ## Hooks
 
-A single `persist hook` binary handles both hook events:
-
-- **PreToolUse** (matcher: `Bash`) — writes persist-session before persist CLI runs
-- **Stop** (matcher: all) — advances iteration, checks limits and keywords
+A single `persist hook` binary handles the Stop hook event. There is no PreToolUse hook.
 
 ## Flow
 
@@ -58,29 +49,29 @@ User types: /persist 5 Fix the parser
 
 1. Skill expands, Claude calls Bash tool with `persist <<'...'`
 
-2. PreToolUse hook fires (before Bash executes)
-   --> command starts with "persist"
-   --> writes session_id to .claude/persist-session
-
-3. Bash tool runs `persist` CLI (start)
-   --> reads .claude/persist-session, deletes it
-   --> parse limit: "5" -> total=5, deadline=null
-   --> write persist.json {session_id: {iteration: 0, ...}}
+2. Bash tool runs `persist` CLI (start)
+   --> writes session under unclaimed_1 key
    --> print work prompt (iteration 1) to stdout for skill expansion
 
-4. Claude responds, Stop hook fires
-   --> read persist.json, look up by event session_id
-   --> increment iteration
-   --> check deadline or iteration limit
-   --> check last_assistant_message for keywords
-   --> TASK_COMPLETE? inject verification prompt
-   --> REVIEW_OKAY? delete session entry, done
-   --> REVIEW_INCOMPLETE or no keyword? inject work prompt
-   --> limit reached? delete session entry, done
+3. Claude responds, Stop hook fires
+   --> session_id not found in persist.json (not yet claimed)
+   --> reads transcript JSONL at transcript_path
+   --> finds unclaimed entry whose prompt appears in transcript
+   --> claims entry: re-keys unclaimed_1 → session_id
+   --> proceeds with stop_hook():
+       increment iteration, check limits/keywords, inject next prompt
+
+4. Subsequent Stop hooks
+   --> session_id found directly in persist.json (fast path)
+   --> stop_hook() as above
+
+5. Session ends when:
+   --> REVIEW_OKAY keyword: session complete (verified)
+   --> iteration limit or deadline reached
 ```
 
 ## Commands
 
 - `/persist LIMIT TASK` — start session
 - `/persist-status` — show status
-- `/persist-stop` — stop a running session (fallback clears all if no session_id)
+- `/persist-stop` — stop a running session (clears all sessions)

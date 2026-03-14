@@ -1,7 +1,7 @@
 """Persistent coding sessions for Claude Code.
 
     persist              Start from /persist slash command
-    persist hook         Hook handler (PreToolUse + Stop)
+    persist hook         Hook handler (Stop only)
     persist stop         Cancel a running session
     persist status       Show session status
 """
@@ -9,12 +9,11 @@
 import json
 import sys
 
-from .common import parse_limit, is_expired, format_remaining, claude_pid  # noqa: F401
+from .common import parse_limit, is_expired, format_remaining  # noqa: F401
 from .session import (  # noqa: F401
     start, stop, status, stop_hook, find_keyword,
     read_all_sessions, read_session, write_session, delete_session,
-    resolve_session, resolve_by_session_id, associate,
-    _db_path,
+    _state_path, find_unclaimed, claim_session, transcript_contains_prompt,
 )
 
 
@@ -34,51 +33,28 @@ def hook():
     event = json.loads(sys.stdin.read())
     event_name = event.get('hook_event_name', '')
 
-    if event_name == 'PreToolUse':
-        _pre_tool_use(event)
-    elif event_name == 'Stop':
+    if event_name == 'Stop':
         _stop(event)
 
 
-def _pre_tool_use(event):
-    """Associate the current PID with the Claude session_id."""
-    pid = claude_pid()
-    session_id = event.get('session_id')
-    if not pid or not session_id:
-        return
-    key, state = resolve_session(pid)
-    if not state:
-        return
-    # Already associated — nothing to do.
-    if key == session_id:
-        return
-    associate(pid, session_id)
-
-
 def _stop(event):
-    pid = claude_pid()
-    if not pid:
+    session_id = event.get('session_id')
+    if not session_id:
         return
 
-    key, state = resolve_session(pid)
+    # Fast path: already-claimed session
+    state = read_session(session_id)
+    if state is not None:
+        stop_hook(session_id, state, event)
+        return
 
-    session_id = event.get('session_id')
+    # Slow path: look for unclaimed entries matching transcript
+    transcript_path = event.get('transcript_path')
+    if not transcript_path:
+        return
 
-    if state is None:
-        # After --continue: new PID, but session_id is preserved.
-        session_id = event.get('session_id')
-        if session_id:
-            key, state = resolve_by_session_id(session_id)
-        if state is None:
+    for key, state in find_unclaimed():
+        if transcript_contains_prompt(transcript_path, state['prompt']):
+            claim_session(key, session_id)
+            stop_hook(session_id, state, event)
             return
-        # Re-associate new PID with this session.
-        associate(pid, session_id)
-        key = session_id
-    else:
-        # Migrate nonce → real session_id if not yet associated.
-        session_id = event.get('session_id')
-        if session_id and key != session_id:
-            associate(pid, session_id)
-            key = session_id
-
-    stop_hook(key, state, event)
