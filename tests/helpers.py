@@ -133,3 +133,12 @@ def make_stop_event(last_msg="", session_id="test-session",
         "last_assistant_message": last_msg,
         "session_id": session_id,
     }
+
+
+def make_pre_tool_use_event(tool_name, tool_input, session_id="test-session"):
+    return {
+        "hook_event_name": "PreToolUse",
+        "tool_name": tool_name,
+        "tool_input": tool_input,
+        "session_id": session_id,
+    }

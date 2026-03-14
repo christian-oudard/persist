@@ -13,7 +13,7 @@ from helpers import (
     make_project, read_state_file, read_session, write_session,
     write_unclaimed, make_transcript,
     run_main, run_start, run_status, run_hook, run_persist,
-    make_stop_event,
+    make_stop_event, make_pre_tool_use_event,
 )
 
 
@@ -486,6 +486,95 @@ class TestSessionIsolation:
         assert read_session(dot_claude, "csid-A") is None
         assert read_session(dot_claude, "csid-B")["iteration"] == 1
 
+# --- PreToolUse: block self-stop ---
+
+class TestBlockSelfStop:
+    def test_blocks_bash_persist_stop(self, tmp_path):
+        """Agent in a persist session cannot run 'persist stop' via Bash."""
+        proj, dot_claude = make_project(tmp_path)
+        write_session(dot_claude, "csid-1", 2, "Fix bugs", 5)
+
+        event = make_pre_tool_use_event(
+            "Bash", {"command": "persist stop"}, session_id="csid-1")
+        decision = run_hook(proj, event)
+
+        assert decision["decision"] == "block"
+        assert "Cannot stop" in decision["reason"]
+        # Session still exists
+        assert read_session(dot_claude, "csid-1") is not None
+
+    def test_blocks_skill_persist_stop(self, tmp_path):
+        """Agent in a persist session cannot invoke the persist-stop skill."""
+        proj, dot_claude = make_project(tmp_path)
+        write_session(dot_claude, "csid-1", 2, "Fix bugs", 5)
+
+        event = make_pre_tool_use_event(
+            "Skill", {"skill": "persist-stop"}, session_id="csid-1")
+        decision = run_hook(proj, event)
+
+        assert decision["decision"] == "block"
+        assert "Cannot stop" in decision["reason"]
+
+    def test_blocks_qualified_skill_name(self, tmp_path):
+        """Fully qualified skill name like 'abc123-persist-stop' is also blocked."""
+        proj, dot_claude = make_project(tmp_path)
+        write_session(dot_claude, "csid-1", 2, "Fix bugs", 5)
+
+        event = make_pre_tool_use_event(
+            "Skill", {"skill": "xw6rl2i143903mspnjv4p52ahidqbphk-persist-stop"},
+            session_id="csid-1")
+        decision = run_hook(proj, event)
+
+        assert decision["decision"] == "block"
+
+    def test_allows_non_persist_session(self, tmp_path):
+        """Bash 'persist stop' is allowed when session is NOT persisted."""
+        proj, dot_claude = make_project(tmp_path)
+
+        event = make_pre_tool_use_event(
+            "Bash", {"command": "persist stop"}, session_id="csid-1")
+        decision = run_hook(proj, event)
+
+        assert decision is None
+
+    def test_allows_other_bash_commands(self, tmp_path):
+        """Non-persist-stop Bash commands are not blocked."""
+        proj, dot_claude = make_project(tmp_path)
+        write_session(dot_claude, "csid-1", 2, "Fix bugs", 5)
+
+        event = make_pre_tool_use_event(
+            "Bash", {"command": "persist status"}, session_id="csid-1")
+        decision = run_hook(proj, event)
+
+        assert decision is None
+
+    def test_allows_other_skills(self, tmp_path):
+        """Non-persist-stop skills are not blocked."""
+        proj, dot_claude = make_project(tmp_path)
+        write_session(dot_claude, "csid-1", 2, "Fix bugs", 5)
+
+        event = make_pre_tool_use_event(
+            "Skill", {"skill": "persist-status"}, session_id="csid-1")
+        decision = run_hook(proj, event)
+
+        assert decision is None
+
+    def test_does_not_block_different_session(self, tmp_path):
+        """A session that is NOT persisted can still run persist stop."""
+        proj, dot_claude = make_project(tmp_path)
+        write_session(dot_claude, "csid-1", 2, "Fix bugs", 5)
+
+        # csid-2 is NOT a persist session
+        event = make_pre_tool_use_event(
+            "Bash", {"command": "persist stop"}, session_id="csid-2")
+        decision = run_hook(proj, event)
+
+        assert decision is None
+
+
+# --- Session isolation tests (continued) ---
+
+class TestSessionContinuation:
     def test_continue_after_restart(self, tmp_path):
         """--continue spawns new process but same session_id survives."""
         proj, dot_claude = make_project(tmp_path)
