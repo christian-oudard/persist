@@ -110,8 +110,12 @@ class TestFindKeyword:
     def test_empty(self):
         assert persist.find_keyword("") is None
 
-    def test_priority_task_complete_first(self):
-        assert persist.find_keyword("TASK_COMPLETE REVIEW_OKAY") == "TASK_COMPLETE"
+    def test_priority_review_okay_first(self):
+        """REVIEW_OKAY beats TASK_COMPLETE when both appear in text."""
+        assert persist.find_keyword("TASK_COMPLETE REVIEW_OKAY") == "REVIEW_OKAY"
+
+    def test_priority_review_incomplete_over_task_complete(self):
+        assert persist.find_keyword("TASK_COMPLETE REVIEW_INCOMPLETE") == "REVIEW_INCOMPLETE"
 
 
 # --- Integration tests: start() ---
@@ -315,6 +319,20 @@ class TestHookStateMachine:
 
         assert decision["decision"] == "block"
         assert "verified" in decision["reason"].lower()
+        assert read_session(dot_claude, "csid-1") is None
+
+    def test_review_okay_beats_iterations_exhausted(self, tmp_path):
+        """REVIEW_OKAY takes priority even when iterations are also exhausted."""
+        proj, dot_claude = make_project(tmp_path)
+        # iteration=1, total=1 → next iteration (2) exceeds total
+        write_session(dot_claude, "csid-1", 1, "debug", 1)
+
+        decision = run_hook(proj, make_stop_event(
+            "Looks good. REVIEW_OKAY", session_id="csid-1"))
+
+        assert decision["decision"] == "block"
+        assert "verified" in decision["reason"].lower()
+        assert "exhausted" not in decision["reason"].lower()
         assert read_session(dot_claude, "csid-1") is None
 
     def test_review_incomplete_continues(self, tmp_path):

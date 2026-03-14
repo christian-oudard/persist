@@ -224,9 +224,11 @@ def stop_hook(session_id, state, event):
 def find_keyword(text):
     """Check text for a session keyword.
 
-    Returns 'TASK_COMPLETE', 'REVIEW_OKAY', 'REVIEW_INCOMPLETE', or None.
+    Returns 'REVIEW_OKAY', 'REVIEW_INCOMPLETE', 'TASK_COMPLETE', or None.
+    REVIEW_* checked first: the model may reference TASK_COMPLETE in prose
+    while giving a review answer.
     """
-    for kw in ('TASK_COMPLETE', 'REVIEW_OKAY', 'REVIEW_INCOMPLETE'):
+    for kw in ('REVIEW_OKAY', 'REVIEW_INCOMPLETE', 'TASK_COMPLETE'):
         if kw in text:
             return kw
     return None
