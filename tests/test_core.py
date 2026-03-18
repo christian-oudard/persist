@@ -146,6 +146,19 @@ class TestStart:
         assert "Iteration 1" in result.stdout
         assert "Do stuff" in result.stdout
 
+    def test_first_iteration_has_loop_intro(self, tmp_path):
+        proj, dot_claude = make_project(tmp_path)
+        result = run_start(proj, "3 Do stuff")
+        assert "persistent coding loop" in result.stdout
+        assert "same prompt again" in result.stdout
+
+    def test_subsequent_iteration_omits_loop_intro(self, tmp_path):
+        proj, dot_claude = make_project(tmp_path)
+        write_session(dot_claude, "csid-1", 1, "Do stuff", 5)
+        decision = run_hook(proj, make_stop_event("Progress.",
+                                                   session_id="csid-1"))
+        assert "same prompt again" not in decision["reason"]
+
     def test_start_creates_unclaimed_key(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
         run_start(proj, "5 task")

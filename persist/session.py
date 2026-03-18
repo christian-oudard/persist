@@ -6,10 +6,19 @@ import time
 
 from .common import dot_claude_dir, parse_limit, is_expired
 
+LOOP_INTRO = """\
+You are in a persistent coding loop. Each time you stop, you will receive \
+this same prompt again with a fresh context window. Your prior work persists \
+in files and git history, so start by checking git log and reading relevant \
+files to pick up where you left off."""
+
 ORIENTATION = """\
-You are in a persistent coding session. Orient yourself by reading files and \
-checking git status/log. Work incrementally: implement one piece, verify it \
-works, then stop. You will be re-prompted after each iteration."""
+Work incrementally: implement one piece, verify it works, then stop. You \
+will be re-prompted with fresh context for the next iteration."""
+
+CONTINUATION = """\
+Review git log and recent files to see what was done in previous iterations, \
+then determine the next useful piece of work."""
 
 PERSISTENCE = """\
 Stay persistent and creative. If your current approach is blocked, try a \
@@ -19,11 +28,13 @@ worth doing."""
 
 EXIT_INSTRUCTIONS = """\
 If the task is genuinely and fully complete, output exactly TASK_COMPLETE \
-as a standalone message. Do not use it to escape the session because you are \
-stuck, use the next iteration to try a different approach."""
+as a standalone message. Treat this as a factual assertion, not an escape \
+hatch. Only say it when it is unambiguously true. If you are stuck or \
+frustrated, do not use it to bail out. the next iteration is a fresh \
+chance to try something different."""
 
 VERIFICATION = """\
-You indicated the task is complete. Before confirming, do a thorough review:
+You claimed the task is complete. Before confirming, do a thorough review:
 
 1. Re-read the original task requirements below.
 2. Read through all code you wrote or modified.
@@ -38,8 +49,14 @@ message:
 describe what remains before the keyword."""
 
 
-def work_prompt(*, prompt, iteration_label, no_exit=False):
-    parts = [f"# Iteration {iteration_label}", ORIENTATION, PERSISTENCE]
+def work_prompt(*, prompt, iteration_label, no_exit=False, first=False):
+    parts = [f"# Iteration {iteration_label}"]
+    if first:
+        parts.append(LOOP_INTRO)
+    else:
+        parts.append(CONTINUATION)
+    parts.append(ORIENTATION)
+    parts.append(PERSISTENCE)
     if not no_exit:
         parts.append(EXIT_INSTRUCTIONS)
     parts.append(f"## Task\n\n{prompt}")
@@ -176,7 +193,7 @@ def start():
     if no_exit:
         state['no_exit'] = True
     write_session(key, state)
-    print(work_prompt(prompt=prompt, iteration_label="1", no_exit=no_exit))
+    print(work_prompt(prompt=prompt, iteration_label="1", no_exit=no_exit, first=True))
 
 
 def stop():
