@@ -8,7 +8,7 @@ from .common import dot_claude_dir, parse_limit, is_expired
 
 LOOP_INTRO = """\
 You are in a persistent coding loop. Each time you stop, you will receive \
-this same prompt again with a fresh context window."""
+this same prompt again. Your work persists in files and git history."""
 
 CONTINUATION = """\
 Check git log and recent files to see what previous iterations accomplished. \
@@ -16,8 +16,8 @@ Then ask: what is the most valuable thing I could work on next?"""
 
 ORIENTATION = """\
 Work incrementally: do one thing, verify it, then stop. Difficulty is \
-expected. if something isn't working, adjust your approach rather than \
-giving up. If everything obvious is done, look deeper."""
+expected; each setback narrows the problem. If everything obvious is \
+done, look deeper."""
 
 EXIT_INSTRUCTIONS = """\
 If the purpose is genuinely and fully achieved, output exactly TASK_COMPLETE \
