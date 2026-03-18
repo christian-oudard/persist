@@ -21,6 +21,10 @@ Time-based sessions run until the deadline, with no iteration cap. Iteration-bas
 
 The session ends when any termination condition is met: iteration limit, deadline, or task completion keyword.
 
+### --no-exit
+
+`/persist --no-exit LIMIT TASK` disables the early-exit TASK_COMPLETE/REVIEW_OKAY mechanism. The session runs until the iteration or deadline limit is reached, ignoring completion keywords entirely. The work prompt omits TASK_COMPLETE instructions. The flag can appear anywhere before the TASK text.
+
 ## Session Identity
 
 Every session is scoped to a Claude Code session_id. This prevents cross-session pollution when multiple agents share a project.
@@ -75,5 +79,6 @@ User types: /persist 5 Fix the parser
 ## Commands
 
 - `/persist LIMIT TASK` — start session
+- `/persist --no-exit LIMIT TASK` — start session without early exit
 - `/persist-status` — show status
 - `/persist-stop` — stop a running session (clears all sessions)

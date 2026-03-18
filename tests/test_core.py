@@ -651,6 +651,90 @@ class TestFormatRemaining:
         assert "expired" in result
 
 
+class TestNoExit:
+    def test_start_with_no_exit(self, tmp_path):
+        proj, dot_claude = make_project(tmp_path)
+        result = run_start(proj, "--no-exit 5 Fix the bug")
+        assert result.returncode == 0
+        state = read_session(dot_claude, "unclaimed_1")
+        assert state["no_exit"] is True
+        assert state["prompt"] == "Fix the bug"
+        assert state["total"] == 5
+
+    def test_start_no_exit_after_limit(self, tmp_path):
+        proj, dot_claude = make_project(tmp_path)
+        result = run_start(proj, "5 --no-exit Fix the bug")
+        assert result.returncode == 0
+        state = read_session(dot_claude, "unclaimed_1")
+        assert state["no_exit"] is True
+        assert state["prompt"] == "Fix the bug"
+
+    def test_no_exit_prompt_omits_task_complete(self, tmp_path):
+        proj, dot_claude = make_project(tmp_path)
+        result = run_start(proj, "--no-exit 3 Do stuff")
+        assert "TASK_COMPLETE" not in result.stdout
+        assert "no early exit" in result.stdout.lower()
+
+    def test_no_exit_ignores_task_complete(self, tmp_path):
+        proj, dot_claude = make_project(tmp_path)
+        write_session(dot_claude, "csid-1", 2, "Build it", total=5, no_exit=True)
+
+        decision = run_hook(proj, make_stop_event("Done! TASK_COMPLETE",
+                                                   session_id="csid-1"))
+        # Should continue, not trigger verification
+        assert "Verification" not in decision["reason"]
+        assert "Iteration" in decision["reason"]
+        assert read_session(dot_claude, "csid-1")["iteration"] == 3
+
+    def test_no_exit_ignores_review_okay(self, tmp_path):
+        proj, dot_claude = make_project(tmp_path)
+        write_session(dot_claude, "csid-1", 2, "Build it", total=5, no_exit=True)
+
+        decision = run_hook(proj, make_stop_event("REVIEW_OKAY",
+                                                   session_id="csid-1"))
+        # Should continue, not end session
+        assert "verified" not in decision["reason"].lower()
+        assert read_session(dot_claude, "csid-1") is not None
+        assert read_session(dot_claude, "csid-1")["iteration"] == 3
+
+    def test_no_exit_still_expires_on_iterations(self, tmp_path):
+        proj, dot_claude = make_project(tmp_path)
+        write_session(dot_claude, "csid-1", 3, "Do stuff", total=3, no_exit=True)
+
+        decision = run_hook(proj, make_stop_event("TASK_COMPLETE",
+                                                   session_id="csid-1"))
+        assert "exhausted" in decision["reason"].lower()
+        assert read_session(dot_claude, "csid-1") is None
+
+    def test_no_exit_still_expires_on_deadline(self, tmp_path):
+        proj, dot_claude = make_project(tmp_path)
+        write_session(dot_claude, "csid-1", 2, "Do stuff",
+                      deadline=time.time() - 1, no_exit=True)
+
+        decision = run_hook(proj, make_stop_event("REVIEW_OKAY",
+                                                   session_id="csid-1"))
+        assert "time limit" in decision["reason"].lower()
+        assert read_session(dot_claude, "csid-1") is None
+
+    def test_no_exit_preserved_through_iterations(self, tmp_path):
+        proj, dot_claude = make_project(tmp_path)
+        write_session(dot_claude, "csid-1", 1, "Build it", total=5, no_exit=True)
+
+        run_hook(proj, make_stop_event("Progress.", session_id="csid-1"))
+        state = read_session(dot_claude, "csid-1")
+        assert state["no_exit"] is True
+        assert state["iteration"] == 2
+
+    def test_no_exit_work_prompt_in_hook(self, tmp_path):
+        """Hook continuation prompt also omits TASK_COMPLETE instructions."""
+        proj, dot_claude = make_project(tmp_path)
+        write_session(dot_claude, "csid-1", 1, "Build it", total=5, no_exit=True)
+
+        decision = run_hook(proj, make_stop_event("Progress.",
+                                                   session_id="csid-1"))
+        assert "TASK_COMPLETE" not in decision["reason"]
+
+
 class TestSessionContinuation:
     def test_continue_after_restart(self, tmp_path):
         """--continue spawns new process but same session_id survives."""

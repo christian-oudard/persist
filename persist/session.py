@@ -22,6 +22,20 @@ stuck — use the next iteration to try a different approach.
 {prompt}
 """
 
+WORK_PROMPT_NO_EXIT = """\
+# Iteration {iteration_label}
+
+You are in a persistent coding session. Orient yourself by reading files and \
+checking git status/log. Work incrementally: implement one piece, verify it \
+works, then stop. You will be re-prompted after each iteration.
+
+This session will run until the limit is reached. There is no early exit.
+
+## Task
+
+{prompt}
+"""
+
 VERIFICATION_PROMPT = """\
 # Verification
 
@@ -154,6 +168,10 @@ def start():
         print("Usage: /persist LIMIT TASK", file=sys.stderr)
         sys.exit(1)
 
+    no_exit = '--no-exit' in raw
+    if no_exit:
+        raw = raw.replace('--no-exit', '', 1).strip()
+
     parts = raw.split(None, 1)
     if len(parts) < 2:
         print("Usage: /persist LIMIT TASK", file=sys.stderr)
@@ -163,12 +181,16 @@ def start():
     prompt = parts[1]
     _write_all_sessions({})
     key = next_unclaimed_key()
-    write_session(key, {
+    state = {
         'iteration': 0, 'prompt': prompt,
         'total': total, 'deadline': deadline,
         'started': time.time(),
-    })
-    print(WORK_PROMPT.format(prompt=prompt, iteration_label="1"))
+    }
+    if no_exit:
+        state['no_exit'] = True
+    write_session(key, state)
+    work = WORK_PROMPT_NO_EXIT if no_exit else WORK_PROMPT
+    print(work.format(prompt=prompt, iteration_label="1"))
 
 
 def stop():
@@ -189,13 +211,24 @@ def status():
         print(f"  Task: {data['prompt']}")
 
 
+def _next_state(state, iteration):
+    """Build the next iteration's state dict, preserving all fields."""
+    return {
+        'iteration': iteration, 'prompt': state['prompt'],
+        'total': state.get('total'), 'deadline': state.get('deadline'),
+        'started': state.get('started'),
+        **({'no_exit': True} if state.get('no_exit') else {}),
+    }
+
+
 def stop_hook(session_id, state, event):
     """Handle a stop hook for a persist session."""
     prompt = state['prompt']
     iteration = state['iteration'] + 1
+    no_exit = state.get('no_exit')
 
     last_msg = event.get('last_assistant_message', '')
-    keyword = find_keyword(last_msg)
+    keyword = None if no_exit else find_keyword(last_msg)
 
     expired = is_expired({**state, 'iteration': iteration})
 
@@ -213,24 +246,17 @@ def stop_hook(session_id, state, event):
             "reason": f"Session complete ({reason}). Summarize what you accomplished.",
         }))
     elif keyword == 'TASK_COMPLETE':
-        write_session(session_id, {
-            'iteration': iteration, 'prompt': prompt,
-            'total': state.get('total'), 'deadline': state.get('deadline'),
-            'started': state.get('started'),
-        })
+        write_session(session_id, _next_state(state, iteration))
         print(json.dumps({
             "decision": "block",
             "reason": VERIFICATION_PROMPT.format(prompt=prompt),
         }))
     else:
-        write_session(session_id, {
-            'iteration': iteration, 'prompt': prompt,
-            'total': state.get('total'), 'deadline': state.get('deadline'),
-            'started': state.get('started'),
-        })
+        write_session(session_id, _next_state(state, iteration))
+        work = WORK_PROMPT_NO_EXIT if no_exit else WORK_PROMPT
         print(json.dumps({
             "decision": "block",
-            "reason": WORK_PROMPT.format(prompt=prompt, iteration_label=_iteration_label(iteration, state)),
+            "reason": work.format(prompt=prompt, iteration_label=_iteration_label(iteration, state)),
         }))
 
 
