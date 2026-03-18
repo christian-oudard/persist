@@ -1,6 +1,6 @@
 ---
 description: "Start a persistent coding session."
-argument-hint: "[--no-exit] LIMIT TASK"
+argument-hint: "[--no-exit] LIMIT PURPOSE"
 allowed-tools: ["Bash(persist:*)"]
 hide-from-slash-command-tool: "true"
 ---

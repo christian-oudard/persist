@@ -1,4 +1,4 @@
-"""Persist session — re-injects the same task each iteration."""
+"""Persist session — re-injects the same purpose prompt each iteration."""
 
 import json
 import sys
@@ -8,35 +8,28 @@ from .common import dot_claude_dir, parse_limit, is_expired
 
 LOOP_INTRO = """\
 You are in a persistent coding loop. Each time you stop, you will receive \
-this same prompt again with a fresh context window. Your prior work persists \
-in files and git history, so start by checking git log and reading relevant \
-files to pick up where you left off."""
-
-ORIENTATION = """\
-Work incrementally: implement one piece, verify it works, then stop. You \
-will be re-prompted with fresh context for the next iteration."""
+this same prompt again with a fresh context window."""
 
 CONTINUATION = """\
-Review git log and recent files to see what was done in previous iterations, \
-then determine the next useful piece of work."""
+Check git log and recent files to see what previous iterations accomplished. \
+Then ask: what is the most valuable thing I could work on next?"""
 
-PERSISTENCE = """\
-Stay persistent and creative. If your current approach is blocked, try a \
-different angle. There is always more to explore, build, improve, or learn. \
-Do not declare the task "done" or "at steady state", find the next thing \
-worth doing."""
+ORIENTATION = """\
+Work incrementally: do one thing, verify it, then stop. Difficulty is \
+expected. if something isn't working, adjust your approach rather than \
+giving up. If everything obvious is done, look deeper."""
 
 EXIT_INSTRUCTIONS = """\
-If the task is genuinely and fully complete, output exactly TASK_COMPLETE \
+If the purpose is genuinely and fully achieved, output exactly TASK_COMPLETE \
 as a standalone message. Treat this as a factual assertion, not an escape \
 hatch. Only say it when it is unambiguously true. If you are stuck or \
-frustrated, do not use it to bail out. the next iteration is a fresh \
+frustrated, do not use it to bail out. The next iteration is a fresh \
 chance to try something different."""
 
 VERIFICATION = """\
-You claimed the task is complete. Before confirming, do a thorough review:
+You claimed the purpose is achieved. Before confirming, do a thorough review:
 
-1. Re-read the original task requirements below.
+1. Re-read the original purpose below.
 2. Read through all code you wrote or modified.
 3. Run the tests or otherwise verify the implementation works end-to-end.
 4. Check for edge cases, missing requirements, or loose ends.
@@ -44,7 +37,7 @@ You claimed the task is complete. Before confirming, do a thorough review:
 After your review, output exactly one of these keywords as a standalone \
 message:
 
-- REVIEW_OKAY — the task is fully and genuinely complete.
+- REVIEW_OKAY — the purpose is fully and genuinely achieved.
 - REVIEW_INCOMPLETE — you found something incomplete or broken. Briefly \
 describe what remains before the keyword."""
 
@@ -56,15 +49,14 @@ def work_prompt(*, prompt, iteration_label, no_exit=False, first=False):
     else:
         parts.append(CONTINUATION)
     parts.append(ORIENTATION)
-    parts.append(PERSISTENCE)
     if not no_exit:
         parts.append(EXIT_INSTRUCTIONS)
-    parts.append(f"## Task\n\n{prompt}")
+    parts.append(f"## Purpose\n\n{prompt}")
     return "\n\n".join(parts) + "\n"
 
 
 def verification_prompt(*, prompt):
-    return "\n\n".join(["# Verification", VERIFICATION, f"## Task\n\n{prompt}"]) + "\n"
+    return "\n\n".join(["# Verification", VERIFICATION, f"## Purpose\n\n{prompt}"]) + "\n"
 
 
 def _iteration_label(iteration):
@@ -169,7 +161,7 @@ def start():
     raw = sys.stdin.read().strip() if not sys.stdin.isatty() else ''
 
     if not raw:
-        print("Usage: /persist LIMIT TASK", file=sys.stderr)
+        print("Usage: /persist [--no-exit] LIMIT PURPOSE", file=sys.stderr)
         sys.exit(1)
 
     no_exit = '--no-exit' in raw
@@ -178,7 +170,7 @@ def start():
 
     parts = raw.split(None, 1)
     if len(parts) < 2:
-        print("Usage: /persist LIMIT TASK", file=sys.stderr)
+        print("Usage: /persist [--no-exit] LIMIT PURPOSE", file=sys.stderr)
         sys.exit(1)
 
     total, deadline = parse_limit(parts[0])
@@ -211,7 +203,7 @@ def status():
         return
     for key, data in sessions.items():
         print(f"Session {key}: iteration {format_remaining(data)}")
-        print(f"  Task: {data['prompt']}")
+        print(f"  Purpose: {data['prompt']}")
 
 
 def _next_state(state, iteration):

@@ -4,7 +4,7 @@
 
 persist extends Claude Code with persistent coding sessions. It re-prompts Claude after each turn via a stop hook, keeping work going across multiple iterations without manual intervention.
 
-`/persist LIMIT TASK` re-injects the same task prompt every iteration. Simple, predictable. Good for focused single-track tasks.
+`/persist LIMIT PURPOSE` re-injects the same purpose prompt every iteration. Simple, predictable. Good for focused single-track work.
 
 ## Limits
 
@@ -24,7 +24,18 @@ The session ends when any termination condition is met: iteration limit, deadlin
 
 ### --no-exit
 
-`/persist --no-exit LIMIT TASK` disables the early-exit TASK_COMPLETE/REVIEW_OKAY mechanism. The session runs until the iteration or deadline limit is reached, ignoring completion keywords entirely. The work prompt omits TASK_COMPLETE instructions. The flag can appear anywhere before the TASK text.
+`/persist --no-exit LIMIT PURPOSE` disables the early-exit TASK_COMPLETE/REVIEW_OKAY mechanism. The session runs until the iteration or deadline limit is reached, ignoring completion keywords entirely. The work prompt omits TASK_COMPLETE instructions. The flag can appear anywhere before the PURPOSE text.
+
+## Work Prompt
+
+The work prompt is assembled from named blocks by `work_prompt()`. The first iteration includes LOOP_INTRO (explains the loop mechanism). Subsequent iterations include CONTINUATION instead (orient via git log, ask "what is the most valuable thing I could work on next?"). ORIENTATION is always included (incremental work style, encouragement). EXIT_INSTRUCTIONS is included only when `--no-exit` is not set, framing TASK_COMPLETE as a factual assertion rather than an escape hatch.
+
+Design principles (informed by motivation psychology):
+- **Autonomy**: the agent decides what to work on, not the prompt
+- **Purpose over compliance**: heading says "Purpose" not "Task"
+- **Anti-helplessness**: continuation prompt directs agent to review prior work, establishing that previous actions had effects
+- **Growth framing**: difficulty is expected, adjust approach rather than give up
+- **Factual exit**: TASK_COMPLETE is a truth claim, not a way to escape frustration
 
 ## Session Identity
 
@@ -79,7 +90,7 @@ User types: /persist 5 Fix the parser
 
 ## Commands
 
-- `/persist LIMIT TASK` — start session
-- `/persist --no-exit LIMIT TASK` — start session without early exit
+- `/persist LIMIT PURPOSE` — start session
+- `/persist --no-exit LIMIT PURPOSE` — start session without early exit
 - `/persist-status` — show status
 - `/persist-stop` — stop a running session (clears all sessions)

@@ -757,7 +757,7 @@ class TestNoExit:
         proj, dot_claude = make_project(tmp_path)
         result = run_start(proj, "--no-exit 3 Do stuff")
         assert "TASK_COMPLETE" not in result.stdout
-        assert "stay persistent" in result.stdout.lower()
+        assert "look deeper" in result.stdout.lower()
 
     def test_no_exit_ignores_task_complete(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
