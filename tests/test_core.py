@@ -72,6 +72,16 @@ class TestParseLimit:
         with pytest.raises(ValueError):
             persist.parse_limit("0")
 
+    def test_forever_keyword(self):
+        total, deadline = persist.parse_limit("forever")
+        assert total is None
+        assert deadline is None
+
+    def test_forever_case_insensitive(self):
+        total, deadline = persist.parse_limit("Forever")
+        assert total is None
+        assert deadline is None
+
 
 # --- Unit tests: is_expired ---
 
@@ -649,6 +659,66 @@ class TestFormatRemaining:
             "started": time.time() - 7300,
         })
         assert "expired" in result
+
+
+class TestForever:
+    def test_start_forever_keyword(self, tmp_path):
+        proj, dot_claude = make_project(tmp_path)
+        result = run_start(proj, "forever Fix the bug")
+        assert result.returncode == 0
+        state = read_session(dot_claude, "unclaimed_1")
+        assert state["total"] is None
+        assert state["deadline"] is None
+
+    def test_forever_never_expires(self, tmp_path):
+        """Forever session continues indefinitely."""
+        proj, dot_claude = make_project(tmp_path)
+        write_session(dot_claude, "csid-1", 100, "Fix bugs")
+
+        decision = run_hook(proj, make_stop_event("Still going.",
+                                                   session_id="csid-1"))
+        assert decision["decision"] == "block"
+        assert "Iteration" in decision["reason"]
+        assert read_session(dot_claude, "csid-1")["iteration"] == 101
+
+    def test_forever_task_complete_triggers_verification(self, tmp_path):
+        """Forever session still honors TASK_COMPLETE."""
+        proj, dot_claude = make_project(tmp_path)
+        write_session(dot_claude, "csid-1", 5, "Fix bugs")
+
+        decision = run_hook(proj, make_stop_event("Done! TASK_COMPLETE",
+                                                   session_id="csid-1"))
+        assert "Verification" in decision["reason"]
+
+    def test_forever_review_okay_ends(self, tmp_path):
+        """Forever session ends on REVIEW_OKAY."""
+        proj, dot_claude = make_project(tmp_path)
+        write_session(dot_claude, "csid-1", 5, "Fix bugs")
+
+        decision = run_hook(proj, make_stop_event("REVIEW_OKAY",
+                                                   session_id="csid-1"))
+        assert "verified" in decision["reason"].lower()
+        assert read_session(dot_claude, "csid-1") is None
+
+    def test_forever_no_exit_truly_infinite(self, tmp_path):
+        """forever + --no-exit: only /persist-stop can end it."""
+        proj, dot_claude = make_project(tmp_path)
+        write_session(dot_claude, "csid-1", 50, "Fix bugs", no_exit=True)
+
+        decision = run_hook(proj, make_stop_event("TASK_COMPLETE REVIEW_OKAY",
+                                                   session_id="csid-1"))
+        # Should continue despite both keywords
+        assert "Iteration" in decision["reason"]
+        assert read_session(dot_claude, "csid-1")["iteration"] == 51
+
+    def test_forever_format_remaining(self):
+        result = persist.format_remaining({"iteration": 7, "started": time.time() - 3600})
+        assert "forever" in result
+        assert "7, " in result
+
+    def test_forever_format_remaining_no_started(self):
+        result = persist.format_remaining({"iteration": 3})
+        assert "forever" in result
 
 
 class TestNoExit:

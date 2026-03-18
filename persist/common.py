@@ -28,10 +28,15 @@ def dot_claude_dir():
 def parse_limit(s):
     """Parse a limit string into (total_iterations, deadline_timestamp).
 
-    Returns a tuple where exactly one value is non-None.
+    Returns a tuple where at most one value is non-None.
+    Both are None for forever (no limit).
     Raises ValueError for unparseable input.
     """
     s = s.strip()
+
+    # Forever: "forever"
+    if s.lower() == 'forever':
+        return None, None
 
     # Duration: "2h", "30m"
     m = re.match(r'^(\d+)h$', s, re.IGNORECASE)
@@ -120,4 +125,8 @@ def format_remaining(data):
     total = data.get('total')
     if total:
         return f"{iteration}/{total}"
-    return "unknown"
+    started = data.get('started')
+    if started:
+        elapsed = time.time() - started
+        return f"{iteration}, {_format_duration(elapsed)} (forever)"
+    return f"{iteration} (forever)"

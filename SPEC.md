@@ -16,8 +16,9 @@ The LIMIT argument can be an iteration count or a time limit:
 - `2pm` — today at 2 PM (tomorrow if already past)
 - `1400` — military time, today at 14:00 (numbers >= 1000 are always time)
 - `14:00` — same as above
+- `forever` — no limit, runs until stopped or task complete
 
-Time-based sessions run until the deadline, with no iteration cap. Iteration-based sessions have no time limit.
+Time-based sessions run until the deadline, with no iteration cap. Iteration-based sessions have no time limit. Forever sessions have neither, ending only via task completion or `/persist-stop`.
 
 The session ends when any termination condition is met: iteration limit, deadline, or task completion keyword.
 
@@ -42,7 +43,7 @@ Every session is scoped to a Claude Code session_id. This prevents cross-session
 }
 ```
 
-Fields: `iteration` (int), `prompt` (str), `total` (int or null), `deadline` (float or null), `started` (float — Unix timestamp when session began). Exactly one of `total` or `deadline` is non-null. `started` is used to compute elapsed/total duration for statusline display.
+Fields: `iteration` (int), `prompt` (str), `total` (int or null), `deadline` (float or null), `started` (float — Unix timestamp when session began). At most one of `total` or `deadline` is non-null. Both are null for forever sessions. `started` is used to compute elapsed/total duration for statusline display.
 
 ## Hooks
 
