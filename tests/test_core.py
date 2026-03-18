@@ -605,8 +605,8 @@ class TestStartedField:
         assert data["started"] == started
         assert data["iteration"] == 3
 
-    def test_elapsed_time_in_work_prompt(self, tmp_path):
-        """Work prompt shows elapsed time when started is set."""
+    def test_iteration_label_is_plain_number(self, tmp_path):
+        """Work prompt shows just the iteration number, no elapsed time."""
         proj, dot_claude = make_project(tmp_path)
         started = time.time() - 5400  # 1h30m ago
         write_session(dot_claude, "csid-1", 2, "Do stuff", total=10,
@@ -614,7 +614,8 @@ class TestStartedField:
 
         decision = run_hook(proj, make_stop_event("Progress.",
                                                    session_id="csid-1"))
-        assert "Iteration 3, 1h" in decision["reason"]
+        assert "Iteration 3\n" in decision["reason"]
+        assert "1h" not in decision["reason"]
 
     def test_started_preserved_through_task_complete(self, tmp_path):
         """started preserved when TASK_COMPLETE triggers verification."""
@@ -743,7 +744,7 @@ class TestNoExit:
         proj, dot_claude = make_project(tmp_path)
         result = run_start(proj, "--no-exit 3 Do stuff")
         assert "TASK_COMPLETE" not in result.stdout
-        assert "no early exit" in result.stdout.lower()
+        assert "stay persistent" in result.stdout.lower()
 
     def test_no_exit_ignores_task_complete(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)

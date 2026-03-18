@@ -4,37 +4,30 @@ import json
 import sys
 import time
 
-from .common import dot_claude_dir, parse_limit, is_expired, _format_duration
+from .common import dot_claude_dir, parse_limit, is_expired
 
-WORK_PROMPT = """\
-# Iteration {iteration_label}
-
-You are in a persistent coding session. Orient yourself by reading files and \
-checking git status/log. Work incrementally: implement one piece, verify it \
-works, then stop. You will be re-prompted after each iteration.
-
+_EXIT_INSTRUCTIONS = """\
 If the task is genuinely and fully complete, output exactly TASK_COMPLETE \
 as a standalone message. Do not use it to escape the session because you are \
-stuck — use the next iteration to try a different approach.
+stuck, use the next iteration to try a different approach."""
 
-## Task
 
-{prompt}
-"""
-
-WORK_PROMPT_NO_EXIT = """\
-# Iteration {iteration_label}
-
-You are in a persistent coding session. Orient yourself by reading files and \
-checking git status/log. Work incrementally: implement one piece, verify it \
-works, then stop. You will be re-prompted after each iteration.
-
-This session will run until the limit is reached. There is no early exit.
-
-## Task
-
-{prompt}
-"""
+def work_prompt(*, prompt, iteration_label, no_exit=False):
+    parts = [
+        f"# Iteration {iteration_label}",
+        "You are in a persistent coding session. Orient yourself by reading "
+        "files and checking git status/log. Work incrementally: implement one "
+        "piece, verify it works, then stop. You will be re-prompted after "
+        "each iteration.",
+        "Stay persistent and creative. If your current approach is blocked, "
+        "try a different angle. There is always more to explore, build, "
+        'improve, or learn. Do not declare the task "done" or "at steady '
+        'state", find the next thing worth doing.',
+    ]
+    if not no_exit:
+        parts.append(_EXIT_INSTRUCTIONS)
+    parts.append(f"## Task\n\n{prompt}")
+    return "\n\n".join(parts) + "\n"
 
 VERIFICATION_PROMPT = """\
 # Verification
@@ -59,12 +52,8 @@ describe what remains before the keyword.
 """
 
 
-def _iteration_label(iteration, state):
-    """Format iteration label like '3' or '3, 12m'."""
-    started = state.get('started')
-    if started:
-        elapsed = time.time() - started
-        return f"{iteration}, {_format_duration(elapsed)}"
+def _iteration_label(iteration):
+    """Format iteration label like '3'."""
     return str(iteration)
 
 
@@ -189,8 +178,7 @@ def start():
     if no_exit:
         state['no_exit'] = True
     write_session(key, state)
-    work = WORK_PROMPT_NO_EXIT if no_exit else WORK_PROMPT
-    print(work.format(prompt=prompt, iteration_label="1"))
+    print(work_prompt(prompt=prompt, iteration_label="1", no_exit=no_exit))
 
 
 def stop():
@@ -253,10 +241,9 @@ def stop_hook(session_id, state, event):
         }))
     else:
         write_session(session_id, _next_state(state, iteration))
-        work = WORK_PROMPT_NO_EXIT if no_exit else WORK_PROMPT
         print(json.dumps({
             "decision": "block",
-            "reason": work.format(prompt=prompt, iteration_label=_iteration_label(iteration, state)),
+            "reason": work_prompt(prompt=prompt, iteration_label=_iteration_label(iteration), no_exit=no_exit),
         }))
 
 
