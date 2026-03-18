@@ -6,32 +6,23 @@ import time
 
 from .common import dot_claude_dir, parse_limit, is_expired
 
-_EXIT_INSTRUCTIONS = """\
+ORIENTATION = """\
+You are in a persistent coding session. Orient yourself by reading files and \
+checking git status/log. Work incrementally: implement one piece, verify it \
+works, then stop. You will be re-prompted after each iteration."""
+
+PERSISTENCE = """\
+Stay persistent and creative. If your current approach is blocked, try a \
+different angle. There is always more to explore, build, improve, or learn. \
+Do not declare the task "done" or "at steady state", find the next thing \
+worth doing."""
+
+EXIT_INSTRUCTIONS = """\
 If the task is genuinely and fully complete, output exactly TASK_COMPLETE \
 as a standalone message. Do not use it to escape the session because you are \
 stuck, use the next iteration to try a different approach."""
 
-
-def work_prompt(*, prompt, iteration_label, no_exit=False):
-    parts = [
-        f"# Iteration {iteration_label}",
-        "You are in a persistent coding session. Orient yourself by reading "
-        "files and checking git status/log. Work incrementally: implement one "
-        "piece, verify it works, then stop. You will be re-prompted after "
-        "each iteration.",
-        "Stay persistent and creative. If your current approach is blocked, "
-        "try a different angle. There is always more to explore, build, "
-        'improve, or learn. Do not declare the task "done" or "at steady '
-        'state", find the next thing worth doing.',
-    ]
-    if not no_exit:
-        parts.append(_EXIT_INSTRUCTIONS)
-    parts.append(f"## Task\n\n{prompt}")
-    return "\n\n".join(parts) + "\n"
-
-VERIFICATION_PROMPT = """\
-# Verification
-
+VERIFICATION = """\
 You indicated the task is complete. Before confirming, do a thorough review:
 
 1. Re-read the original task requirements below.
@@ -44,12 +35,19 @@ message:
 
 - REVIEW_OKAY — the task is fully and genuinely complete.
 - REVIEW_INCOMPLETE — you found something incomplete or broken. Briefly \
-describe what remains before the keyword.
+describe what remains before the keyword."""
 
-## Task
 
-{prompt}
-"""
+def work_prompt(*, prompt, iteration_label, no_exit=False):
+    parts = [f"# Iteration {iteration_label}", ORIENTATION, PERSISTENCE]
+    if not no_exit:
+        parts.append(EXIT_INSTRUCTIONS)
+    parts.append(f"## Task\n\n{prompt}")
+    return "\n\n".join(parts) + "\n"
+
+
+def verification_prompt(*, prompt):
+    return "\n\n".join(["# Verification", VERIFICATION, f"## Task\n\n{prompt}"]) + "\n"
 
 
 def _iteration_label(iteration):
@@ -237,7 +235,7 @@ def stop_hook(session_id, state, event):
         write_session(session_id, _next_state(state, iteration))
         print(json.dumps({
             "decision": "block",
-            "reason": VERIFICATION_PROMPT.format(prompt=prompt),
+            "reason": verification_prompt(prompt=prompt),
         }))
     else:
         write_session(session_id, _next_state(state, iteration))
