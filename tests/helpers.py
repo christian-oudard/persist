@@ -33,7 +33,7 @@ def read_session(dot_claude, session_id):
 
 
 def write_session(dot_claude, session_id, iteration, prompt, total=None,
-                  deadline=None, started=None, no_exit=False):
+                  deadline=None, started=None, lock=False):
     """Write a session entry to persist.json."""
     state_file = dot_claude / "persist.json"
     data = {}
@@ -46,8 +46,8 @@ def write_session(dot_claude, session_id, iteration, prompt, total=None,
         "deadline": deadline,
         "started": started,
     }
-    if no_exit:
-        entry["no_exit"] = True
+    if lock:
+        entry["lock"] = True
     data[session_id] = entry
     state_file.write_text(json.dumps(data))
 

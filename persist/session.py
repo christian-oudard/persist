@@ -42,14 +42,14 @@ message:
 describe what remains before the keyword."""
 
 
-def work_prompt(*, prompt, iteration_label, no_exit=False, first=False):
+def work_prompt(*, prompt, iteration_label, lock=False, first=False):
     parts = [f"# Iteration {iteration_label}"]
     if first:
         parts.append(LOOP_INTRO)
     else:
         parts.append(CONTINUATION)
     parts.append(ORIENTATION)
-    if not no_exit:
+    if not lock:
         parts.append(EXIT_INSTRUCTIONS)
     parts.append(f"## Purpose\n\n{prompt}")
     return "\n\n".join(parts) + "\n"
@@ -161,16 +161,18 @@ def start():
     raw = sys.stdin.read().strip() if not sys.stdin.isatty() else ''
 
     if not raw:
-        print("Usage: /persist [--no-exit] LIMIT PURPOSE", file=sys.stderr)
+        print("Usage: /persist [--lock|-l] LIMIT PURPOSE", file=sys.stderr)
         sys.exit(1)
 
-    no_exit = '--no-exit' in raw
-    if no_exit:
-        raw = raw.replace('--no-exit', '', 1).strip()
+    tokens = raw.split()
+    lock = '--lock' in tokens or '-l' in tokens
+    if lock:
+        tokens.remove('--lock' if '--lock' in tokens else '-l')
+        raw = ' '.join(tokens)
 
     parts = raw.split(None, 1)
     if len(parts) < 2:
-        print("Usage: /persist [--no-exit] LIMIT PURPOSE", file=sys.stderr)
+        print("Usage: /persist [--lock|-l] LIMIT PURPOSE", file=sys.stderr)
         sys.exit(1)
 
     total, deadline = parse_limit(parts[0])
@@ -182,10 +184,10 @@ def start():
         'total': total, 'deadline': deadline,
         'started': time.time(),
     }
-    if no_exit:
-        state['no_exit'] = True
+    if lock:
+        state['lock'] = True
     write_session(key, state)
-    print(work_prompt(prompt=prompt, iteration_label="1", no_exit=no_exit, first=True))
+    print(work_prompt(prompt=prompt, iteration_label="1", lock=lock, first=True))
 
 
 def stop():
@@ -212,7 +214,7 @@ def _next_state(state, iteration):
         'iteration': iteration, 'prompt': state['prompt'],
         'total': state.get('total'), 'deadline': state.get('deadline'),
         'started': state.get('started'),
-        **({'no_exit': True} if state.get('no_exit') else {}),
+        **({'lock': True} if state.get('lock') else {}),
     }
 
 
@@ -220,10 +222,10 @@ def stop_hook(session_id, state, event):
     """Handle a stop hook for a persist session."""
     prompt = state['prompt']
     iteration = state['iteration'] + 1
-    no_exit = state.get('no_exit')
+    lock = state.get('lock')
 
     last_msg = event.get('last_assistant_message', '')
-    keyword = None if no_exit else find_keyword(last_msg)
+    keyword = None if lock else find_keyword(last_msg)
 
     expired = is_expired({**state, 'iteration': iteration})
 
@@ -250,7 +252,7 @@ def stop_hook(session_id, state, event):
         write_session(session_id, _next_state(state, iteration))
         print(json.dumps({
             "decision": "block",
-            "reason": work_prompt(prompt=prompt, iteration_label=_iteration_label(iteration), no_exit=no_exit),
+            "reason": work_prompt(prompt=prompt, iteration_label=_iteration_label(iteration), lock=lock),
         }))
 
 

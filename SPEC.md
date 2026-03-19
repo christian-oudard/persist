@@ -7,7 +7,7 @@ persist extends Claude Code with persistent coding sessions. It re-prompts Claud
 ## Commands
 
 - `/persist LIMIT PURPOSE` , start a session that re-injects PURPOSE every iteration
-- `/persist --no-exit LIMIT PURPOSE` , start a session without early exit (runs until limit)
+- `/persist --lock LIMIT PURPOSE` , start a session that ignores task completion (runs until limit)
 - `/persist-status` , show session status
 - `/persist-stop` , stop a running session
 
@@ -33,7 +33,7 @@ A session ends when any of these conditions is met:
 - **Deadline** reached
 - **Task completion**: Claude outputs TASK_COMPLETE or REVIEW_OKAY
 
-With `--no-exit`, task completion keywords are ignored. The session runs until its iteration or deadline limit.
+With `--lock`, task completion keywords are ignored. The session runs until its iteration or deadline limit.
 
 ## Session Isolation
 
@@ -46,7 +46,7 @@ Each iteration, persist injects a work prompt that includes:
 - **First iteration**: an explanation of the loop mechanism
 - **Continuation iterations**: orientation via git log, asking "what is the most valuable thing I could work on next?"
 - **Always**: guidance toward incremental work and persistence through difficulty
-- **Unless --no-exit**: instructions for signaling task completion
+- **Unless --lock**: instructions for signaling task completion
 
 Design principles:
 - **Autonomy**: the agent decides what to work on, not the prompt
