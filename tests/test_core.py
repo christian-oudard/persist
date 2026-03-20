@@ -765,7 +765,8 @@ class TestLock:
         proj, dot_claude = make_project(tmp_path)
         result = run_start(proj, "--lock 3 Do stuff")
         assert "TASK_COMPLETE" not in result.stdout
-        assert "look deeper" in result.stdout.lower()
+        assert "locked session" in result.stdout.lower()
+        assert "no completion keyword" in result.stdout.lower()
 
     def test_lock_ignores_task_complete(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
@@ -776,6 +777,8 @@ class TestLock:
         # Should continue, not trigger verification
         assert "Verification" not in decision["reason"]
         assert "Iteration" in decision["reason"]
+        assert "locked session" in decision["reason"].lower()
+        assert "next most valuable" in decision["reason"].lower()
         assert read_session(dot_claude, "csid-1")["iteration"] == 3
 
     def test_lock_ignores_review_okay(self, tmp_path):
@@ -786,6 +789,7 @@ class TestLock:
                                                    session_id="csid-1"))
         # Should continue, not end session
         assert "verified" not in decision["reason"].lower()
+        assert "locked session" in decision["reason"].lower()
         assert read_session(dot_claude, "csid-1") is not None
         assert read_session(dot_claude, "csid-1")["iteration"] == 3
 
@@ -818,7 +822,7 @@ class TestLock:
         assert state["iteration"] == 2
 
     def test_lock_work_prompt_in_hook(self, tmp_path):
-        """Hook continuation prompt also omits TASK_COMPLETE instructions."""
+        """Normal stop in lock mode has no TASK_COMPLETE mention at all."""
         proj, dot_claude = make_project(tmp_path)
         write_session(dot_claude, "csid-1", 1, "Build it", total=5, lock=True)
 

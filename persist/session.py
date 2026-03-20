@@ -10,6 +10,11 @@ LOOP_INTRO = """\
 You are in a persistent coding loop. Each time you stop, you will receive \
 this same prompt again. Your work persists in files and git history."""
 
+LOCK_NOTICE = """\
+This is a locked session. There is no completion keyword, and there is \
+more work to do. Each iteration, think about what the next most valuable \
+thing to work on is."""
+
 CONTINUATION = """\
 Check git log and recent files to see what previous iterations accomplished. \
 Then ask: what is the most valuable thing I could work on next?"""
@@ -49,7 +54,9 @@ def work_prompt(*, prompt, iteration_label, lock=False, first=False):
     else:
         parts.append(CONTINUATION)
     parts.append(ORIENTATION)
-    if not lock:
+    if lock:
+        parts.append(LOCK_NOTICE)
+    else:
         parts.append(EXIT_INSTRUCTIONS)
     parts.append(f"## Purpose\n\n{prompt}")
     return "\n\n".join(parts) + "\n"
@@ -225,11 +232,11 @@ def stop_hook(session_id, state, event):
     lock = state.get('lock')
 
     last_msg = event.get('last_assistant_message', '')
-    keyword = None if lock else find_keyword(last_msg)
+    keyword = find_keyword(last_msg)
 
     expired = is_expired({**state, 'iteration': iteration})
 
-    if keyword == 'REVIEW_OKAY':
+    if not lock and keyword == 'REVIEW_OKAY':
         delete_session(session_id)
         print(json.dumps({
             "decision": "block",
@@ -242,7 +249,7 @@ def stop_hook(session_id, state, event):
             "decision": "block",
             "reason": f"Session complete ({reason}). Summarize what you accomplished.",
         }))
-    elif keyword == 'TASK_COMPLETE':
+    elif not lock and keyword == 'TASK_COMPLETE':
         write_session(session_id, _next_state(state, iteration))
         print(json.dumps({
             "decision": "block",
@@ -250,9 +257,15 @@ def stop_hook(session_id, state, event):
         }))
     else:
         write_session(session_id, _next_state(state, iteration))
+        wp = work_prompt(prompt=prompt, iteration_label=_iteration_label(iteration), lock=lock)
+        if lock and keyword:
+            wp = ("You indicated you are done, however this is a locked "
+                  "session with no completion keyword. There is more work "
+                  "to do. Think about what the next most valuable thing to "
+                  "work on is.\n\n" + wp)
         print(json.dumps({
             "decision": "block",
-            "reason": work_prompt(prompt=prompt, iteration_label=_iteration_label(iteration), lock=lock),
+            "reason": wp,
         }))
 
 
