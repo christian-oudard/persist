@@ -7,7 +7,7 @@ persist extends Claude Code with persistent coding sessions. It re-prompts Claud
 ## Commands
 
 - `/persist LIMIT PURPOSE` , start a session that re-injects PURPOSE every iteration
-- `/persist --lock LIMIT PURPOSE` , start a session that ignores task completion (runs until limit)
+- `/persist (-l/--lock) LIMIT PURPOSE` , start a session that ignores task completion (runs until limit)
 - `/persist-status` , show session status
 - `/persist-stop` , stop a running session
 
