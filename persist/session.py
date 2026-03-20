@@ -184,7 +184,11 @@ def start():
 
     total, deadline = parse_limit(parts[0])
     prompt = parts[1]
-    _write_all_sessions({})
+    # Clear unclaimed entries (previous /persist in this conversation)
+    # but preserve claimed entries (other agents' sessions).
+    sessions = read_all_sessions()
+    sessions = {k: v for k, v in sessions.items() if not k.startswith("unclaimed_")}
+    _write_all_sessions(sessions)
     key = next_unclaimed_key()
     state = {
         'iteration': 0, 'prompt': prompt,

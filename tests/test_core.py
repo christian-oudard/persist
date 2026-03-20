@@ -173,12 +173,12 @@ class TestStart:
         assert read_session(dot_claude, "unclaimed_1")["prompt"] == "task B"
         assert read_session(dot_claude, "unclaimed_2") is None
 
-    def test_start_replaces_claimed_session(self, tmp_path):
-        """Starting a new task should clear previously claimed sessions too."""
+    def test_start_preserves_claimed_session(self, tmp_path):
+        """Starting a new task should preserve other agents' claimed sessions."""
         proj, dot_claude = make_project(tmp_path)
         write_session(dot_claude, "csid-1", 3, "old task", 5)
         run_start(proj, "3 new task")
-        assert read_session(dot_claude, "csid-1") is None
+        assert read_session(dot_claude, "csid-1")["prompt"] == "old task"
         assert read_session(dot_claude, "unclaimed_1")["prompt"] == "new task"
 
     def test_multiline_task(self, tmp_path):
