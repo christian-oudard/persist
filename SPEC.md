@@ -54,3 +54,13 @@ Design principles:
 - **Anti-helplessness**: continuation prompt reviews prior work, establishing that previous actions had effects
 - **Growth framing**: difficulty is expected, adjust approach rather than give up
 - **Factual exit**: TASK_COMPLETE is a truth claim, not a way to escape frustration
+
+## Notification
+
+On every stop except iteration re-injection, persist runs the shell command in `PERSIST_BELL_CMD`. This covers normal stops (no active session), session completion, and expiry. Silent by default.
+
+Example for terminal bell on Linux:
+
+```
+PERSIST_BELL_CMD="printf '\a' > /dev/tty"
+```

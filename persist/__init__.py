@@ -12,7 +12,7 @@ import sys
 
 from .common import parse_limit, is_expired, format_remaining  # noqa: F401
 from .session import (  # noqa: F401
-    start, stop, status, stop_hook, find_keyword,
+    start, stop, status, stop_hook, find_keyword, _bell,
     read_all_sessions, read_session, write_session, delete_session,
     _state_path, find_unclaimed, claim_session, transcript_contains_prompt,
 )
@@ -75,6 +75,7 @@ def _pre_tool_use(event):
 def _stop(event):
     session_id = event.get('session_id')
     if not session_id:
+        _bell()
         return
 
     # Fast path: already-claimed session
@@ -86,6 +87,7 @@ def _stop(event):
     # Slow path: look for unclaimed entries matching transcript
     transcript_path = event.get('transcript_path')
     if not transcript_path:
+        _bell()
         return
 
     for key, state in find_unclaimed():
@@ -93,3 +95,6 @@ def _stop(event):
             claim_session(key, session_id)
             stop_hook(session_id, state, event)
             return
+
+    # No session matched, normal stop
+    _bell()
