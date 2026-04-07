@@ -88,84 +88,22 @@ def _state_path():
     return d / 'persist.json' if d else None
 
 
-def read_all_sessions():
+def read_session():
     path = _state_path()
     if path and path.exists():
         return json.load(path.open())
-    return {}
+    return None
 
 
-def _write_all_sessions(sessions):
+def write_session(state):
     path = _state_path()
-    if sessions:
-        json.dump(sessions, path.open('w'))
-    elif path and path.exists():
+    json.dump(state, path.open('w'))
+
+
+def delete_session():
+    path = _state_path()
+    if path and path.exists():
         path.unlink()
-
-
-def read_session(session_id):
-    return read_all_sessions().get(session_id)
-
-
-def write_session(session_id, state):
-    sessions = read_all_sessions()
-    sessions[session_id] = state
-    _write_all_sessions(sessions)
-
-
-def delete_session(session_id):
-    sessions = read_all_sessions()
-    sessions.pop(session_id, None)
-    _write_all_sessions(sessions)
-
-
-# --- Unclaimed entries ---
-
-def next_unclaimed_key():
-    """Return the next available unclaimed_N key."""
-    sessions = read_all_sessions()
-    n = 1
-    while f"unclaimed_{n}" in sessions:
-        n += 1
-    return f"unclaimed_{n}"
-
-
-def find_unclaimed():
-    """Return list of (key, state) for unclaimed entries."""
-    sessions = read_all_sessions()
-    return [(k, v) for k, v in sessions.items() if k.startswith("unclaimed_")]
-
-
-def claim_session(old_key, new_session_id):
-    """Re-key an entry from placeholder to real session_id."""
-    sessions = read_all_sessions()
-    state = sessions.pop(old_key, None)
-    if state is not None:
-        sessions[new_session_id] = state
-        _write_all_sessions(sessions)
-    return state
-
-
-# --- Transcript ---
-
-def transcript_contains_prompt(transcript_path, prompt):
-    """Check if prompt text appears in transcript JSONL messages."""
-    try:
-        with open(transcript_path) as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    entry = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                content = entry.get('message', {}).get('content', '')
-                if isinstance(content, str) and prompt in content:
-                    return True
-    except (FileNotFoundError, OSError):
-        pass
-    return False
 
 
 # --- Commands ---
@@ -194,12 +132,6 @@ def start():
 
     total, deadline = parse_limit(parts[0])
     prompt = parts[1]
-    # Clear unclaimed entries (previous /persist in this conversation)
-    # but preserve claimed entries (other agents' sessions).
-    sessions = read_all_sessions()
-    sessions = {k: v for k, v in sessions.items() if not k.startswith("unclaimed_")}
-    _write_all_sessions(sessions)
-    key = next_unclaimed_key()
     state = {
         'iteration': 0, 'prompt': prompt,
         'total': total, 'deadline': deadline,
@@ -207,26 +139,24 @@ def start():
     }
     if lock:
         state['lock'] = True
-    write_session(key, state)
+    # Immediately replaces any existing session.
+    write_session(state)
     print(work_prompt(prompt=prompt, iteration_label="1", lock=lock, first=True))
 
 
 def stop():
-    path = _state_path()
-    if path and path.exists():
-        path.unlink()
-    print('Session stopped (all sessions cleared).')
+    delete_session()
+    print('Session stopped.')
 
 
 def status():
     from .common import format_remaining
-    sessions = read_all_sessions()
-    if not sessions:
+    state = read_session()
+    if not state:
         print("No active session.")
         return
-    for key, data in sessions.items():
-        print(f"Session {key}: iteration {format_remaining(data)}")
-        print(f"  Purpose: {data['prompt']}")
+    print(f"Iteration {format_remaining(state)}")
+    print(f"Purpose: {state['prompt']}")
 
 
 def _next_state(state, iteration):
@@ -239,8 +169,8 @@ def _next_state(state, iteration):
     }
 
 
-def stop_hook(session_id, state, event):
-    """Handle a stop hook for a persist session."""
+def stop_hook(state, event):
+    """Handle a stop hook for the active persist session."""
     prompt = state['prompt']
     iteration = state['iteration'] + 1
     lock = state.get('lock')
@@ -251,14 +181,14 @@ def stop_hook(session_id, state, event):
     expired = is_expired({**state, 'iteration': iteration})
 
     if not lock and keyword == 'REVIEW_OKAY':
-        delete_session(session_id)
+        delete_session()
         _bell()
         print(json.dumps({
             "decision": "block",
             "reason": "Session complete (verified). Summarize what you accomplished.",
         }))
     elif expired:
-        delete_session(session_id)
+        delete_session()
         _bell()
         reason = 'time limit reached' if expired == 'deadline' else 'iterations exhausted'
         print(json.dumps({
@@ -266,13 +196,13 @@ def stop_hook(session_id, state, event):
             "reason": f"Session complete ({reason}). Summarize what you accomplished.",
         }))
     elif not lock and keyword == 'TASK_COMPLETE':
-        write_session(session_id, _next_state(state, iteration))
+        write_session(_next_state(state, iteration))
         print(json.dumps({
             "decision": "block",
             "reason": verification_prompt(prompt=prompt),
         }))
     else:
-        write_session(session_id, _next_state(state, iteration))
+        write_session(_next_state(state, iteration))
         wp = work_prompt(prompt=prompt, iteration_label=_iteration_label(iteration), lock=lock)
         if lock and keyword:
             wp = ("You indicated you are done, however this is a locked "

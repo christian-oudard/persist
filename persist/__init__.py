@@ -13,8 +13,7 @@ import sys
 from .common import parse_limit, is_expired, format_remaining  # noqa: F401
 from .session import (  # noqa: F401
     start, stop, status, stop_hook, find_keyword, _bell,
-    read_all_sessions, read_session, write_session, delete_session,
-    _state_path, find_unclaimed, claim_session, transcript_contains_prompt,
+    read_session, write_session, delete_session, _state_path,
 )
 
 
@@ -60,11 +59,7 @@ def _pre_tool_use(event):
     if not _is_persist_stop_attempt(event):
         return
 
-    session_id = event.get('session_id')
-    if not session_id:
-        return
-
-    if read_session(session_id) is not None:
+    if read_session() is not None:
         print(json.dumps({
             "decision": "block",
             "reason": "Cannot stop your own persist session. "
@@ -73,28 +68,8 @@ def _pre_tool_use(event):
 
 
 def _stop(event):
-    session_id = event.get('session_id')
-    if not session_id:
+    state = read_session()
+    if state is None:
         _bell()
         return
-
-    # Fast path: already-claimed session
-    state = read_session(session_id)
-    if state is not None:
-        stop_hook(session_id, state, event)
-        return
-
-    # Slow path: look for unclaimed entries matching transcript
-    transcript_path = event.get('transcript_path')
-    if not transcript_path:
-        _bell()
-        return
-
-    for key, state in find_unclaimed():
-        if transcript_contains_prompt(transcript_path, state['prompt']):
-            claim_session(key, session_id)
-            stop_hook(session_id, state, event)
-            return
-
-    # No session matched, normal stop
-    _bell()
+    stop_hook(state, event)

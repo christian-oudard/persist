@@ -16,29 +16,18 @@ def make_project(tmp_path):
     return tmp_path, dot_claude
 
 
-def read_state_file(dot_claude):
-    """Read the raw persist.json."""
+def read_session(dot_claude):
+    """Read the persist.json state, or None if no session."""
     state_file = dot_claude / "persist.json"
     if state_file.exists():
         return json.loads(state_file.read_text())
     return None
 
 
-def read_session(dot_claude, session_id):
-    """Read a specific session's state from persist.json."""
-    data = read_state_file(dot_claude)
-    if data:
-        return data.get(session_id)
-    return None
-
-
-def write_session(dot_claude, session_id, iteration, prompt, total=None,
+def write_session(dot_claude, iteration, prompt, total=None,
                   deadline=None, started=None, lock=False):
-    """Write a session entry to persist.json."""
+    """Write the active session state to persist.json."""
     state_file = dot_claude / "persist.json"
-    data = {}
-    if state_file.exists():
-        data = json.loads(state_file.read_text())
     entry = {
         "iteration": iteration,
         "prompt": prompt,
@@ -48,40 +37,7 @@ def write_session(dot_claude, session_id, iteration, prompt, total=None,
     }
     if lock:
         entry["lock"] = True
-    data[session_id] = entry
-    state_file.write_text(json.dumps(data))
-
-
-def write_unclaimed(dot_claude, prompt, total=None, deadline=None, started=None):
-    """Write an unclaimed entry, returning the key used."""
-    state_file = dot_claude / "persist.json"
-    data = {}
-    if state_file.exists():
-        data = json.loads(state_file.read_text())
-    n = 1
-    while f"unclaimed_{n}" in data:
-        n += 1
-    key = f"unclaimed_{n}"
-    data[key] = {
-        "iteration": 0,
-        "prompt": prompt,
-        "total": total,
-        "deadline": deadline,
-        "started": started,
-    }
-    state_file.write_text(json.dumps(data))
-    return key
-
-
-def make_transcript(path, messages):
-    """Create a JSONL transcript file.
-
-    messages: list of strings (user message content)
-    """
-    with open(path, 'w') as f:
-        for msg in messages:
-            entry = {"type": "user", "message": {"content": msg}}
-            f.write(json.dumps(entry) + '\n')
+    state_file.write_text(json.dumps(entry))
 
 
 def run_persist(cwd, func, stdin_text):
@@ -130,20 +86,16 @@ def run_hook(cwd, event):
     return None
 
 
-def make_stop_event(last_msg="", session_id="test-session",
-                    transcript_path="/dev/null"):
+def make_stop_event(last_msg=""):
     return {
         "hook_event_name": "Stop",
-        "transcript_path": transcript_path,
         "last_assistant_message": last_msg,
-        "session_id": session_id,
     }
 
 
-def make_pre_tool_use_event(tool_name, tool_input, session_id="test-session"):
+def make_pre_tool_use_event(tool_name, tool_input):
     return {
         "hook_event_name": "PreToolUse",
         "tool_name": tool_name,
         "tool_input": tool_input,
-        "session_id": session_id,
     }

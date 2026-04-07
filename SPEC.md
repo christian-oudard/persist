@@ -35,10 +35,6 @@ A session ends when any of these conditions is met:
 
 With `--lock`, task completion keywords are ignored. The session runs until its iteration or deadline limit. If the agent attempts to use a completion keyword anyway, the prompt explicitly tells it this is a locked session and it cannot exit.
 
-## Session Isolation
-
-Every session is scoped to a Claude Code session_id. Multiple agents can share a project without interfering with each other's sessions.
-
 ## Work Prompt
 
 Each iteration, persist injects a work prompt that includes:
