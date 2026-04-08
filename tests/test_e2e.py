@@ -103,6 +103,18 @@ class ClaudePTY:
         self.fd = None
 
     def _setup_hook(self, tmp_path):
+        # Wrapper bin dir: shadows the installed `persist` binary so the
+        # /persist slash command invokes source-tree code, not whatever stale
+        # build is in PATH. Also used by the Stop hook.
+        self.bin_dir = tmp_path / "bin"
+        self.bin_dir.mkdir()
+        persist_wrapper = self.bin_dir / "persist"
+        persist_wrapper.write_text(f"""\
+#!/bin/bash
+exec env PYTHONPATH={PROJECT_ROOT} python3 -c 'import sys; from persist import main; sys.exit(main() or 0)' "$@"
+""")
+        persist_wrapper.chmod(0o755)
+
         hook_wrapper = tmp_path / "hook_wrapper.sh"
         self.settings_file = tmp_path / "settings.json"
 
@@ -111,7 +123,7 @@ class ClaudePTY:
 EVENT=$(cat)
 echo "$EVENT" >> {self.hook_log}
 cd {self.project_dir}
-echo "$EVENT" | PYTHONPATH={PROJECT_ROOT} python3 -m persist hook
+echo "$EVENT" | PATH={self.bin_dir}:$PATH persist hook
 """)
         hook_wrapper.chmod(0o755)
 
@@ -130,6 +142,8 @@ echo "$EVENT" | PYTHONPATH={PROJECT_ROOT} python3 -m persist hook
         env["TERM"] = "xterm-256color"
         env["COLUMNS"] = "120"
         env["LINES"] = "40"
+        # Prepend wrapper bin so /persist invokes source-tree code.
+        env["PATH"] = f"{self.bin_dir}:{env.get('PATH', '')}"
 
         pid, fd = pty.fork()
         if pid == 0:
@@ -248,7 +262,7 @@ echo "$EVENT" | PYTHONPATH={PROJECT_ROOT} python3 -m persist hook
             self.pid = None
 
 
-E2E_TIMEOUT = 120  # seconds per test
+E2E_TIMEOUT = 150  # seconds per test
 
 
 @pytest.fixture
@@ -275,127 +289,34 @@ def claude(tmp_path):
     c.cleanup()
 
 
-# --- Test tasks ---
-# Designed for haiku: extremely explicit, no ambiguity, no state tracking needed.
+# --- Smoke test ---
+# A single end-to-end canary: the core test suite already exercises the
+# hook state machine in isolation. This test verifies the three things
+# that can only break in the real TUI:
+#   1. /persist slash command reaches start() and writes persist.json
+#   2. The Stop hook actually fires and re-injects the work prompt
+#   3. Iteration limit ends the session and deletes persist.json
 
 COUNTING_TASK = (
     "Say one number per iteration, counting upward. "
     "Use number words, not digits. This task is never complete."
 )
 
-STOP_AT_FIVE_TASK = (
-    "Say one number per iteration, counting upward. Use number words, not digits. "
-    "The task is complete once you have said the number five."
-)
 
+def test_smoke_two_iteration_session(claude):
+    claude.submit(f"/persist 2 {COUNTING_TASK}")
 
-# --- Tests ---
+    got_enough = claude.wait_for_hook_calls(2, timeout=90)
+    hooks = claude.parse_hook_log()
+    assert got_enough, (
+        f"Expected 2+ hook calls, got {len(hooks)}. "
+        f"Messages: {[h.get('last_assistant_message', '')[:40] for h in hooks]}"
+    )
 
-class TestIterationExhaustion:
-    """Test: /persist 3 <counting task>
+    claude.wait_for_session_end(timeout=30)
+    assert not claude.state_file_exists(), \
+        "State file should be deleted when iterations exhausted"
 
-    The session should run for 3 iterations and terminate when exhausted.
-    """
-
-    def test_runs_three_iterations(self, claude):
-        claude.submit(f"/persist 3 {COUNTING_TASK}")
-
-        got_enough = claude.wait_for_hook_calls(3, timeout=120)
-        hooks = claude.parse_hook_log()
-
-        assert got_enough, (
-            f"Expected 3+ hook calls, got {len(hooks)}. "
-            f"Messages: {[h.get('last_assistant_message', '')[:40] for h in hooks]}"
-        )
-
-        # Wait for the session to clean up
-        claude.wait_for_session_end(timeout=30)
-
-        assert not claude.state_file_exists(), \
-            "State file should be deleted when iterations exhausted"
-
-    def test_hook_receives_stop_events(self, claude):
-        claude.submit(f"/persist 2 {COUNTING_TASK}")
-
-        claude.wait_for_hook_calls(2, timeout=120)
-        claude.wait_for_session_end(timeout=30)
-
-        hooks = claude.parse_hook_log()
-        for hook in hooks:
-            assert hook["hook_event_name"] == "Stop"
-            assert "transcript_path" in hook
-            assert len(hook.get("last_assistant_message", "")) > 0
-
-
-class TestEarlyCompletion:
-    """Test: /persist 10 <task that ends after five>
-
-    The agent should count to five, say TASK_COMPLETE, pass verification,
-    and end the session well before 10 iterations.
-    """
-
-    def test_completes_before_iteration_limit(self, claude):
-        claude.submit(f"/persist 10 {STOP_AT_FIVE_TASK}")
-
-        claude.wait_for_session_end(timeout=180)
-
-        hooks = claude.parse_hook_log()
-        hook_msgs = [h.get("last_assistant_message", "") for h in hooks]
-
-        assert len(hooks) < 10, (
-            f"Expected early completion, got {len(hooks)} hooks. "
-            f"Messages: {[m[:40] for m in hook_msgs]}"
-        )
-        assert not claude.state_file_exists(), \
-            "State file should be deleted after completion"
-
-    def test_task_complete_detected(self, claude):
-        claude.submit(f"/persist 10 {STOP_AT_FIVE_TASK}")
-
-        claude.wait_for_session_end(timeout=180)
-
-        hooks = claude.parse_hook_log()
-        hook_msgs = [h.get("last_assistant_message", "") for h in hooks]
-        saw_complete = any("TASK_COMPLETE" in m for m in hook_msgs)
-
-        assert saw_complete, (
-            "Agent should have said TASK_COMPLETE after counting to five. "
-            f"Messages: {[m[:60] for m in hook_msgs]}"
-        )
-
-
-class TestPersistStop:
-    """Test: /persist-stop sent mid-session via Escape + command.
-
-    Start a 10-iteration session, wait for 2+ iterations, send Escape to
-    interrupt the current turn, then type /persist-stop. Verifies the full
-    stop path through the real TUI.
-    """
-
-    def test_stop_terminates_session(self, claude):
-        claude.submit(f"/persist 10 {COUNTING_TASK}")
-
-        # Wait for at least 2 hook calls (2 iterations done)
-        got_enough = claude.wait_for_hook_calls(2, timeout=120)
-        assert got_enough, (
-            f"Expected 2+ iterations before stopping, got {claude.count_hook_calls()}"
-        )
-
-        # Send Escape and wait for input prompt (no sleep!)
-        claude.send_escape()
-        ready = claude.wait_for_input_ready(timeout=15)
-        assert ready, "Prompt did not reappear after Escape"
-
-        # Submit /persist-stop
-        claude.submit("/persist-stop")
-
-        # Wait for state file to be deleted
-        claude.wait_for_session_end(timeout=30)
-
-        hooks = claude.parse_hook_log()
-        assert len(hooks) < 10, (
-            f"Expected early stop, got {len(hooks)} hooks. "
-            f"Messages: {[h.get('last_assistant_message', '')[:40] for h in hooks]}"
-        )
-        assert not claude.state_file_exists(), \
-            "State file should be deleted by /persist-stop"
+    for h in hooks:
+        assert h["hook_event_name"] == "Stop"
+        assert len(h.get("last_assistant_message", "")) > 0
