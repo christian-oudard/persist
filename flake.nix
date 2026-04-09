@@ -11,32 +11,8 @@
       packages = eachSystem (system:
         let pkgs = nixpkgs.legacyPackages.${system}; in
         {
-          default = pkgs.python3Packages.buildPythonApplication {
-            pname = "persist";
-            version = "0.1.0";
-            src = ./.;
-            format = "pyproject";
-            nativeBuildInputs = [ pkgs.python3Packages.hatchling ];
-          };
+          default = pkgs.callPackage ./package.nix { };
         }
       );
-
-      # Skill paths for nix-claude consumers
-      skills = {
-        persist = ./skills/persist;
-        persist-status = ./skills/persist-status;
-        persist-stop = ./skills/persist-stop;
-      };
-
-      # Ready-made nix-claude plugin config
-      plugin = eachSystem (system: {
-          description = "Persistent coding sessions for Claude Code";
-          skills = builtins.attrValues self.skills;
-          package = self.packages.${system}.default;
-          settings.hooks.Stop = [{
-            matcher = "";
-            hooks = [{ type = "command"; command = "persist hook"; }];
-          }];
-        });
     };
 }

@@ -1,0 +1,5 @@
+{
+  "name": "persist",
+  "description": "Persistent coding sessions for Claude Code using stop hooks",
+  "version": "0.1.0"
+}
