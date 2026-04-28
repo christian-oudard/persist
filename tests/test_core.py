@@ -163,7 +163,7 @@ class TestStart:
         assert read_session(dot_claude) is not None
 
     def test_start_replaces_existing_session(self, tmp_path):
-        """A second /persist immediately overwrites the prior session."""
+        """A second /persist:go immediately overwrites the prior session."""
         proj, dot_claude = make_project(tmp_path)
         run_start(proj, "5 task A")
         run_start(proj, "3 task B")
@@ -404,27 +404,16 @@ class TestBlockSelfStop:
         assert read_session(dot_claude) is not None
 
     def test_blocks_skill_persist_stop(self, tmp_path):
-        """Agent in a persist session cannot invoke the persist-stop skill."""
+        """Agent in a persist session cannot invoke the persist:stop skill."""
         proj, dot_claude = make_project(tmp_path)
         write_session(dot_claude, 2, "Fix bugs", 5)
 
         event = make_pre_tool_use_event(
-            "Skill", {"skill": "persist-stop"})
+            "Skill", {"skill": "persist:stop"})
         decision = run_hook(proj, event)
 
         assert decision["decision"] == "block"
         assert "Cannot stop" in decision["reason"]
-
-    def test_blocks_qualified_skill_name(self, tmp_path):
-        """Fully qualified skill name like 'abc123-persist-stop' is also blocked."""
-        proj, dot_claude = make_project(tmp_path)
-        write_session(dot_claude, 2, "Fix bugs", 5)
-
-        event = make_pre_tool_use_event(
-            "Skill", {"skill": "xw6rl2i143903mspnjv4p52ahidqbphk-persist-stop"})
-        decision = run_hook(proj, event)
-
-        assert decision["decision"] == "block"
 
     def test_allows_non_persist_session(self, tmp_path):
         """Bash 'persist stop' is allowed when session is NOT persisted."""
@@ -437,7 +426,7 @@ class TestBlockSelfStop:
         assert decision is None
 
     def test_allows_other_bash_commands(self, tmp_path):
-        """Non-persist-stop Bash commands are not blocked."""
+        """Non-stop Bash commands are not blocked."""
         proj, dot_claude = make_project(tmp_path)
         write_session(dot_claude, 2, "Fix bugs", 5)
 
@@ -448,12 +437,12 @@ class TestBlockSelfStop:
         assert decision is None
 
     def test_allows_other_skills(self, tmp_path):
-        """Non-persist-stop skills are not blocked."""
+        """Non-stop skills are not blocked."""
         proj, dot_claude = make_project(tmp_path)
         write_session(dot_claude, 2, "Fix bugs", 5)
 
         event = make_pre_tool_use_event(
-            "Skill", {"skill": "persist-status"})
+            "Skill", {"skill": "persist:status"})
         decision = run_hook(proj, event)
 
         assert decision is None
@@ -564,7 +553,7 @@ class TestForever:
         assert read_session(dot_claude) is None
 
     def test_forever_lock_truly_infinite(self, tmp_path):
-        """forever + --lock: only /persist-stop can end it."""
+        """forever + --lock: only /persist:stop can end it."""
         proj, dot_claude = make_project(tmp_path)
         write_session(dot_claude, 50, "Fix bugs", lock=True)
 

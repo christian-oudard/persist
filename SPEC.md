@@ -6,10 +6,10 @@ persist extends Claude Code with persistent coding sessions. It re-prompts Claud
 
 ## Commands
 
-- `/persist LIMIT PURPOSE` , start a session that re-injects PURPOSE every iteration
-- `/persist (-l/--lock) LIMIT PURPOSE` , start a session that ignores task completion (runs until limit)
-- `/persist-status` , show session status
-- `/persist-stop` , stop a running session
+- `/persist:go LIMIT PURPOSE` , start a session that re-injects PURPOSE every iteration
+- `/persist:go (-l/--lock) LIMIT PURPOSE` , start a session that ignores task completion (runs until limit)
+- `/persist:status` , show session status
+- `/persist:stop` , stop a running session
 
 ## Limits
 
@@ -23,7 +23,7 @@ The LIMIT argument can be an iteration count or a time limit:
 - `14:00` , same as above
 - `forever` , no limit, runs until stopped or task complete
 
-Time-based sessions run until the deadline, with no iteration cap. Iteration-based sessions have no time limit. Forever sessions have neither, ending only via task completion or `/persist-stop`.
+Time-based sessions run until the deadline, with no iteration cap. Iteration-based sessions have no time limit. Forever sessions have neither, ending only via task completion or `/persist:stop`.
 
 ## Termination
 

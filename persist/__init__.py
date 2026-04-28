@@ -1,6 +1,6 @@
 """Persistent coding sessions for Claude Code.
 
-    persist              Start from /persist slash command
+    persist              Start from /persist:go slash command
     persist hook         Hook handler (Stop + PreToolUse)
     persist stop         Cancel a running session
     persist status       Show session status
@@ -50,7 +50,7 @@ def _is_persist_stop_attempt(event):
 
     if tool_name == 'Skill':
         skill = tool_input.get('skill', '')
-        return skill.endswith('persist-stop')
+        return skill == 'persist:stop'
 
     return False
 
@@ -63,7 +63,7 @@ def _pre_tool_use(event):
         print(json.dumps({
             "decision": "block",
             "reason": "Cannot stop your own persist session. "
-                      "Ask the user to run /persist-stop manually.",
+                      "Ask the user to run /persist:stop manually.",
         }))
 
 

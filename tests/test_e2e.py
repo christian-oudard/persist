@@ -104,7 +104,7 @@ class ClaudePTY:
 
     def _setup_hook(self, tmp_path):
         # Wrapper bin dir: shadows the installed `persist` binary so the
-        # /persist slash command invokes source-tree code, not whatever stale
+        # /persist:go slash command invokes source-tree code, not whatever stale
         # build is in PATH. Also used by the Stop hook.
         self.bin_dir = tmp_path / "bin"
         self.bin_dir.mkdir()
@@ -142,7 +142,7 @@ echo "$EVENT" | PATH={self.bin_dir}:$PATH persist hook
         env["TERM"] = "xterm-256color"
         env["COLUMNS"] = "120"
         env["LINES"] = "40"
-        # Prepend wrapper bin so /persist invokes source-tree code.
+        # Prepend wrapper bin so /persist:go invokes source-tree code.
         env["PATH"] = f"{self.bin_dir}:{env.get('PATH', '')}"
 
         pid, fd = pty.fork()
@@ -293,7 +293,7 @@ def claude(tmp_path):
 # A single end-to-end canary: the core test suite already exercises the
 # hook state machine in isolation. This test verifies the three things
 # that can only break in the real TUI:
-#   1. /persist slash command reaches start() and writes persist.json
+#   1. /persist:go slash command reaches start() and writes persist.json
 #   2. The Stop hook actually fires and re-injects the work prompt
 #   3. Iteration limit ends the session and deletes persist.json
 
@@ -304,7 +304,7 @@ COUNTING_TASK = (
 
 
 def test_smoke_two_iteration_session(claude):
-    claude.submit(f"/persist 2 {COUNTING_TASK}")
+    claude.submit(f"/persist:go 2 {COUNTING_TASK}")
 
     got_enough = claude.wait_for_hook_calls(2, timeout=90)
     hooks = claude.parse_hook_log()

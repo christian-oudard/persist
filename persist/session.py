@@ -116,7 +116,7 @@ def start():
     raw = sys.stdin.read().strip() if not sys.stdin.isatty() else ''
 
     if not raw:
-        print("Usage: /persist [--lock|-l] LIMIT PURPOSE", file=sys.stderr)
+        print("Usage: /persist:go [--lock|-l] LIMIT PURPOSE", file=sys.stderr)
         sys.exit(1)
 
     tokens = raw.split()
@@ -127,7 +127,7 @@ def start():
 
     parts = raw.split(None, 1)
     if len(parts) < 2:
-        print("Usage: /persist [--lock|-l] LIMIT PURPOSE", file=sys.stderr)
+        print("Usage: /persist:go [--lock|-l] LIMIT PURPOSE", file=sys.stderr)
         sys.exit(1)
 
     total, deadline = parse_limit(parts[0])
