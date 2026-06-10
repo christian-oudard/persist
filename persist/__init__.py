@@ -12,7 +12,7 @@ import sys
 
 from .common import parse_limit, is_expired, format_remaining  # noqa: F401
 from .session import (  # noqa: F401
-    start, stop, status, stop_hook, find_keyword, _bell,
+    start, stop, status, stop_hook, find_keyword,
     read_session, write_session, delete_session, _state_path,
 )
 
@@ -70,6 +70,5 @@ def _pre_tool_use(event):
 def _stop(event):
     state = read_session()
     if state is None:
-        _bell()
         return
     stop_hook(state, event)

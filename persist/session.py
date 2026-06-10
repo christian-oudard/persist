@@ -1,19 +1,10 @@
 """Persist session — re-injects the same purpose prompt each iteration."""
 
 import json
-import os
-import subprocess
 import sys
 import time
 
 from .common import dot_claude_dir, parse_limit, is_expired
-
-
-def _bell():
-    """Run PERSIST_BELL_CMD if set. Called on every stop except re-injection."""
-    cmd = os.environ.get('PERSIST_BELL_CMD')
-    if cmd:
-        subprocess.run(cmd, shell=True)
 
 
 LOOP_INTRO = """\
@@ -182,14 +173,12 @@ def stop_hook(state, event):
 
     if not lock and keyword == 'REVIEW_OKAY':
         delete_session()
-        _bell()
         print(json.dumps({
             "decision": "block",
             "reason": "Session complete (verified). Summarize what you accomplished.",
         }))
     elif expired:
         delete_session()
-        _bell()
         reason = 'time limit reached' if expired == 'deadline' else 'iterations exhausted'
         print(json.dumps({
             "decision": "block",
