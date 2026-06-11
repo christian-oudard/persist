@@ -25,6 +25,10 @@ The LIMIT argument can be an iteration count or a time limit:
 
 Time-based sessions run until the deadline, with no iteration cap. Iteration-based sessions have no time limit. Forever sessions have neither, ending only via task completion or `/persist:stop`.
 
+## Session State
+
+An active session is marked by the file `.claude/persist.json` in the project. The file exists exactly while a session is running: created by `/persist:go`, deleted when the session ends for any reason. External tooling may rely on its presence as the activity signal, for example a Stop-hook bell that stays silent during loop iterations.
+
 ## Termination
 
 A session ends when any of these conditions is met:
