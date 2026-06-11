@@ -27,7 +27,7 @@ Time-based sessions run until the deadline, with no iteration cap. Iteration-bas
 
 ## Session State
 
-An active session is marked by the file `.claude/persist.json` in the project. The file exists exactly while a session is running: created by `/persist:go`, deleted when the session ends for any reason. External tooling may rely on its presence as the activity signal, for example a Stop-hook bell that stays silent during loop iterations.
+An active session is marked by the file `.claude/persist.json` in the project, created by `/persist:go` and deleted when the session ends for any reason. The supported way to query it is `persist status`, which prints the session status and exits 0 when a session is active, 1 when there is none. External tooling can use it as a shell guard, for example a Stop-hook bell that stays silent during loop iterations.
 
 ## Termination
 

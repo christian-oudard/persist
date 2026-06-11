@@ -7,7 +7,13 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 
-def dot_claude_dir():
+def dot_claude_dir(create=False):
+    """Find the nearest .claude/ directory below $HOME.
+
+    With create=True, fall back to creating one at the .git project root.
+    Read paths must not create, so that queries like `persist status` have
+    no side effects.
+    """
     project_root = None
     for p in [Path.cwd(), *Path.cwd().parents]:
         if p == Path.home():
@@ -17,7 +23,7 @@ def dot_claude_dir():
             return dot_claude
         if project_root is None and (p / '.git').exists():
             project_root = p
-    if project_root:
+    if create and project_root:
         dot_claude = project_root / '.claude'
         dot_claude.mkdir()
         print(f"Found .git in {project_root}, created {dot_claude}/", file=sys.stderr)

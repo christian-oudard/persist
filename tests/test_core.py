@@ -242,8 +242,15 @@ class TestStart:
     def test_status_inactive(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
         result = run_status(proj)
-        assert result.returncode == 0
+        assert result.returncode == 1
         assert "No active session" in result.stdout
+
+    def test_status_does_not_create_dot_claude(self, tmp_path):
+        (tmp_path / ".git").mkdir()
+        result = run_status(tmp_path)
+        assert result.returncode == 1
+        assert "No active session" in result.stdout
+        assert not (tmp_path / ".claude").exists()
 
 
 # --- Integration tests: hook state machine ---

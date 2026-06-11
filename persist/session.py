@@ -74,8 +74,8 @@ def _iteration_label(iteration):
 
 # --- State file ---
 
-def _state_path():
-    d = dot_claude_dir()
+def _state_path(create=False):
+    d = dot_claude_dir(create)
     return d / 'persist.json' if d else None
 
 
@@ -87,7 +87,7 @@ def read_session():
 
 
 def write_session(state):
-    path = _state_path()
+    path = _state_path(create=True)
     json.dump(state, path.open('w'))
 
 
@@ -100,7 +100,7 @@ def delete_session():
 # --- Commands ---
 
 def start():
-    if dot_claude_dir() is None:
+    if dot_claude_dir(create=True) is None:
         print("Not in a project, or there is no .claude directory.", file=sys.stderr)
         sys.exit(1)
 
@@ -145,7 +145,7 @@ def status():
     state = read_session()
     if not state:
         print("No active session.")
-        return
+        sys.exit(1)
     print(f"Iteration {format_remaining(state)}")
     print(f"Purpose: {state['prompt']}")
 
