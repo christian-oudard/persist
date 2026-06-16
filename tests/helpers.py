@@ -75,6 +75,10 @@ def run_status(cwd):
     return run_persist(cwd, "status", "")
 
 
+def run_active(cwd):
+    return run_persist(cwd, "active", "")
+
+
 def run_hook(cwd, event):
     """Run persist hook and return parsed JSON output (or None)."""
     result = run_persist(cwd, "hook", json.dumps(event))

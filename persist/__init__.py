@@ -3,7 +3,8 @@
     persist              Start from /persist:go slash command
     persist hook         Hook handler (Stop + PreToolUse)
     persist stop         Cancel a running session
-    persist status       Show session status
+    persist status       Show session status (always exits 0)
+    persist active       Exit 0 if a live session is running, else 1
 """
 
 import json
@@ -12,21 +13,26 @@ import sys
 
 from .common import parse_limit, is_expired, format_remaining  # noqa: F401
 from .session import (  # noqa: F401
-    start, stop, status, stop_hook, find_keyword,
+    start, stop, status, active, stop_hook, find_keyword,
     read_session, write_session, delete_session, _state_path,
 )
 
 
 def main():
     cmd = sys.argv[1] if len(sys.argv) > 1 else None
-    if cmd == 'hook':
+    if cmd is None:
+        start()
+    elif cmd == 'hook':
         hook()
     elif cmd == 'stop':
         stop()
     elif cmd == 'status':
         status()
+    elif cmd == 'active':
+        active()
     else:
-        start()
+        print(f"persist: unknown command: {cmd}", file=sys.stderr)
+        sys.exit(2)
 
 
 def hook():

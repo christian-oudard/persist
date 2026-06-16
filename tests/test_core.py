@@ -11,7 +11,7 @@ import persist
 
 from helpers import (
     make_project, read_session, write_session,
-    run_main, run_start, run_status, run_hook, run_persist,
+    run_main, run_start, run_status, run_active, run_hook, run_persist,
     make_stop_event, make_pre_tool_use_event,
 )
 
@@ -242,15 +242,34 @@ class TestStart:
     def test_status_inactive(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
         result = run_status(proj)
-        assert result.returncode == 1
+        assert result.returncode == 0
         assert "No active session" in result.stdout
 
     def test_status_does_not_create_dot_claude(self, tmp_path):
         (tmp_path / ".git").mkdir()
         result = run_status(tmp_path)
-        assert result.returncode == 1
+        assert result.returncode == 0
         assert "No active session" in result.stdout
         assert not (tmp_path / ".claude").exists()
+
+    def test_active_with_session(self, tmp_path):
+        proj, dot_claude = make_project(tmp_path)
+        write_session(dot_claude, 3, "Fix the bug", 5)
+        result = run_active(proj)
+        assert result.returncode == 0
+        assert result.stdout == ""
+
+    def test_active_no_session_no_side_effects(self, tmp_path):
+        (tmp_path / ".git").mkdir()
+        result = run_active(tmp_path)
+        assert result.returncode == 1
+        assert not (tmp_path / ".claude").exists()
+
+    def test_active_expired_reads_inactive(self, tmp_path):
+        proj, dot_claude = make_project(tmp_path)
+        write_session(dot_claude, 1, "Fix the bug", deadline=1)
+        result = run_active(proj)
+        assert result.returncode == 1
 
 
 # --- Integration tests: hook state machine ---

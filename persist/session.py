@@ -145,9 +145,20 @@ def status():
     state = read_session()
     if not state:
         print("No active session.")
-        sys.exit(1)
+        return
     print(f"Iteration {format_remaining(state)}")
     print(f"Purpose: {state['prompt']}")
+
+
+def active():
+    """Exit 0 if a live (non-expired) session is running, else 1. Silent.
+
+    Unlike status(), this checks expiry, so a stale state file that has
+    passed its limit but not yet been cleaned up reads as inactive. This
+    is the predicate external tooling guards on, e.g. a stop-bell hook.
+    """
+    state = read_session()
+    sys.exit(0 if state and not is_expired(state) else 1)
 
 
 def _next_state(state, iteration):

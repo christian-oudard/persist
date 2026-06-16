@@ -70,3 +70,26 @@ To cancel a running session:
 ```
 
 Or run `persist stop` from a terminal in the project directory.
+
+## Scripting
+
+`persist active` is a silent predicate for hooks and scripts: it exits 0 when a live session is running in the current project, 1 otherwise (including a session that has passed its limit but not yet been cleaned up). For example, ring a terminal bell on every stop except while a session loop is running:
+
+```json
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "persist active || printf '\\a' > /dev/tty"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+`persist status` is for humans and always exits 0, so don't guard on it.
