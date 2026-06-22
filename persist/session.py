@@ -151,14 +151,19 @@ def status():
 
 
 def active():
-    """Exit 0 if a live (non-expired) session is running, else 1. Silent.
+    """Exit 0 if a live session is running, 1 if none, 2 if undeterminable.
 
-    Unlike status(), this checks expiry, so a stale state file that has
-    passed its limit but not yet been cleaned up reads as inactive. This
+    Silent. Checks expiry, so a stale state file past its limit reads as no
+    live session (1). Any error reading the state, e.g. corrupt JSON, exits
+    2 so a guard can tell "no session" apart from "cannot determine." This
     is the predicate external tooling guards on, e.g. a stop-bell hook.
     """
-    state = read_session()
-    sys.exit(0 if state and not is_expired(state) else 1)
+    try:
+        state = read_session()
+        live = bool(state) and not is_expired(state)
+    except Exception:
+        sys.exit(2)
+    sys.exit(0 if live else 1)
 
 
 def _next_state(state, iteration):

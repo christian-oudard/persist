@@ -29,7 +29,7 @@ Time-based sessions run until the deadline, with no iteration cap. Iteration-bas
 
 An active session is marked by the file `.claude/persist.json` in the project, created by `/persist:go` and deleted when the session ends for any reason.
 
-`persist status` prints a human-readable summary and always exits 0, where "No active session." is itself a successful result. `persist active` is the machine-readable predicate: it prints nothing and exits 0 when a live session is running, 1 otherwise. It reports inactive for a session that has passed its limit but not yet been cleaned up. External tooling guards on `persist active`, for example a Stop-hook bell that stays silent only while a loop is genuinely running.
+`persist status` prints a human-readable summary and always exits 0, where "No active session." is itself a successful result. `persist active` is the machine-readable predicate: it prints nothing and exits 0 when a live session is running, 1 when there is definitely no live session, and 2 when the state cannot be determined (for example a corrupt state file). A session past its limit but not yet cleaned up counts as no live session (exit 1). External tooling guards on this with a fail-safe rule: act only on a definite exit 1. A Stop-hook bell, for instance, rings on exit 1 but stays silent both during a live loop (0) and when liveness is unknown (2), so a broken or absent predicate never causes spurious rings.
 
 ## Termination
 

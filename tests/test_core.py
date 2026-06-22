@@ -271,6 +271,12 @@ class TestStart:
         result = run_active(proj)
         assert result.returncode == 1
 
+    def test_active_corrupt_state_undeterminable(self, tmp_path):
+        proj, dot_claude = make_project(tmp_path)
+        (dot_claude / "persist.json").write_text("{ not valid json")
+        result = run_active(proj)
+        assert result.returncode == 2
+
 
 # --- Integration tests: hook state machine ---
 
