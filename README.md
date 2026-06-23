@@ -11,42 +11,25 @@ Any iteration   -> limit reached      -> done
 
 ## Install
 
-With uv:
-```bash
-uv tool install persist
+persist is a Claude Code plugin. Add the marketplace and install it:
+
+```
+/plugin marketplace add christian-oudard/persist
+/plugin install persist@persist
 ```
 
-Or with pipx:
-```bash
-pipx install persist
-```
+This registers the `/persist:*` skills and the Stop hook automatically.
 
-## Setup
+### With Nix
 
-### 1. Add the skills
+`default.nix` is a single derivation that is both the plugin directory and
+the `persist` CLI. Add it to your Claude Code plugins, and to `home.packages`
+so the CLI is on the login PATH (the Stop hook and a plain terminal need it
+there; Claude runs hooks with a PATH that excludes plugin bin directories):
 
-Copy each `skills/*/` directory to `~/.claude/skills/`.
-
-### 2. Add the stop hook
-
-Add this to your `~/.claude/settings.json` under `"hooks"`:
-
-```json
-{
-  "hooks": {
-    "Stop": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "persist hook"
-          }
-        ]
-      }
-    ]
-  }
-}
+```nix
+programs.claude-code.plugins = [ (import persist { inherit pkgs; }) ];
+home.packages = [ (import persist { inherit pkgs; }) ];
 ```
 
 ## Usage
