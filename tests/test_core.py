@@ -303,10 +303,15 @@ class TestHookStateMachine:
         proj, dot_claude = make_project(tmp_path)
         write_session(dot_claude, 3, "Build feature X", 5)
 
+        # REVIEW_OKAY starts the final summary turn: session kept (done), silent.
         decision = run_hook(proj, make_stop_event("Everything looks good. REVIEW_OKAY"))
-
         assert decision["decision"] == "block"
         assert "verified" in decision["reason"].lower()
+        assert read_session(dot_claude)["done"] is True
+
+        # Next stop tears it down silently (no decision); the bell rings.
+        decision = run_hook(proj, make_stop_event("Summary of the work."))
+        assert decision is None
         assert read_session(dot_claude) is None
 
     def test_review_okay_beats_iterations_exhausted(self, tmp_path):
@@ -321,7 +326,7 @@ class TestHookStateMachine:
         assert decision["decision"] == "block"
         assert "verified" in decision["reason"].lower()
         assert "exhausted" not in decision["reason"].lower()
-        assert read_session(dot_claude) is None
+        assert read_session(dot_claude)["done"] is True
 
     def test_review_incomplete_continues(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
@@ -339,6 +344,8 @@ class TestHookStateMachine:
         decision = run_hook(proj, make_stop_event("Still working..."))
 
         assert "exhausted" in decision["reason"].lower()
+        assert read_session(dot_claude)["done"] is True
+        assert run_hook(proj, make_stop_event("Summary.")) is None
         assert read_session(dot_claude) is None
 
     def test_no_state_silent(self, tmp_path):
@@ -396,9 +403,14 @@ class TestHookStateMachine:
         d = run_hook(proj, make_stop_event("All done. TASK_COMPLETE"))
         assert "Verification" in d["reason"]
 
-        # 5. REVIEW_OKAY -> session ends
+        # 5. REVIEW_OKAY -> final summary turn (session kept, marked done)
         d = run_hook(proj, make_stop_event("Verified. REVIEW_OKAY"))
         assert "verified" in d["reason"].lower()
+        assert read_session(dot_claude)["done"] is True
+
+        # 6. Summary turn ends -> teardown, session gone
+        d = run_hook(proj, make_stop_event("Here is what I did."))
+        assert d is None
         assert read_session(dot_claude) is None
 
     def test_deadline_expired_ends_session(self, tmp_path):
@@ -407,6 +419,8 @@ class TestHookStateMachine:
                       deadline=time.time() - 1)
         decision = run_hook(proj, make_stop_event("Still working..."))
         assert "time limit" in decision["reason"].lower()
+        assert read_session(dot_claude)["done"] is True
+        assert run_hook(proj, make_stop_event("Summary.")) is None
         assert read_session(dot_claude) is None
 
     def test_deadline_not_expired_continues(self, tmp_path):
@@ -582,7 +596,7 @@ class TestForever:
 
         decision = run_hook(proj, make_stop_event("REVIEW_OKAY"))
         assert "verified" in decision["reason"].lower()
-        assert read_session(dot_claude) is None
+        assert read_session(dot_claude)["done"] is True
 
     def test_forever_lock_truly_infinite(self, tmp_path):
         """forever + --lock: only /persist:stop can end it."""
@@ -666,6 +680,8 @@ class TestLock:
 
         decision = run_hook(proj, make_stop_event("TASK_COMPLETE"))
         assert "exhausted" in decision["reason"].lower()
+        assert read_session(dot_claude)["done"] is True
+        assert run_hook(proj, make_stop_event("Summary.")) is None
         assert read_session(dot_claude) is None
 
     def test_lock_still_expires_on_deadline(self, tmp_path):
@@ -675,7 +691,7 @@ class TestLock:
 
         decision = run_hook(proj, make_stop_event("REVIEW_OKAY"))
         assert "time limit" in decision["reason"].lower()
-        assert read_session(dot_claude) is None
+        assert read_session(dot_claude)["done"] is True
 
     def test_lock_preserved_through_iterations(self, tmp_path):
         proj, dot_claude = make_project(tmp_path)
@@ -693,5 +709,47 @@ class TestLock:
 
         decision = run_hook(proj, make_stop_event("Progress."))
         assert "TASK_COMPLETE" not in decision["reason"]
+
+
+class TestFinishingState:
+    """The teardown keeps the session live for one final summary turn, so the
+    bell guard (`persist active`) does not flip until the review cycle is over."""
+
+    def _done(self, dot_claude):
+        (dot_claude / "persist.json").write_text(json.dumps(
+            {"iteration": 3, "prompt": "x", "started": None, "done": True}))
+
+    def test_done_session_reads_active(self, tmp_path):
+        proj, dot_claude = make_project(tmp_path)
+        self._done(dot_claude)
+        assert run_active(proj).returncode == 0
+
+    def test_done_session_stop_deletes_silently(self, tmp_path):
+        proj, dot_claude = make_project(tmp_path)
+        self._done(dot_claude)
+        decision = run_hook(proj, make_stop_event("Summary."))
+        assert decision is None
+        assert read_session(dot_claude) is None
+
+    def test_status_shows_finishing(self, tmp_path):
+        proj, dot_claude = make_project(tmp_path)
+        self._done(dot_claude)
+        assert "summar" in run_status(proj).stdout.lower()
+
+    def test_active_never_flips_during_review_cycle(self, tmp_path):
+        proj, dot_claude = make_project(tmp_path)
+        write_session(dot_claude, 2, "Build X", 5)
+
+        # TASK_COMPLETE -> verification turn; still active.
+        run_hook(proj, make_stop_event("Done. TASK_COMPLETE"))
+        assert run_active(proj).returncode == 0
+
+        # REVIEW_OKAY -> summary turn; still active.
+        run_hook(proj, make_stop_event("Verified. REVIEW_OKAY"))
+        assert run_active(proj).returncode == 0
+
+        # Summary turn ends -> now inactive, the bell may ring.
+        run_hook(proj, make_stop_event("Here is the summary."))
+        assert run_active(proj).returncode == 1
 
 

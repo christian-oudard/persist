@@ -146,6 +146,9 @@ def status():
     if not state:
         print("No active session.")
         return
+    if state.get('done'):
+        print("Session complete; summarizing.")
+        return
     print(f"Iteration {format_remaining(state)}")
     print(f"Purpose: {state['prompt']}")
 
@@ -157,7 +160,14 @@ def active():
     live session (1). Any error reading the state, e.g. corrupt JSON, exits
     2 so a guard can tell "no session" apart from "cannot determine." This
     is the predicate external tooling guards on, e.g. a stop-bell hook.
+
+    The 50ms delay lets the loop hook win the read/delete race on the final
+    teardown stop: both Stop hooks fire in parallel, so without it the bell
+    guard could read the session before the loop hook deletes it and stay
+    silent, missing the completion ring. The loop hook deletes first thing,
+    so this delay reliably observes the post-deletion state.
     """
+    time.sleep(0.05)
     try:
         state = read_session()
         live = bool(state) and not is_expired(state)
@@ -176,8 +186,32 @@ def _next_state(state, iteration):
     }
 
 
+def _finish(state, reason):
+    """End the loop with one final summary turn.
+
+    The session is kept (marked done, limits stripped so it still reads as
+    live) rather than deleted, so the bell guard stays silent on this stop:
+    `persist active` must not flip until the whole review cycle is over. The
+    next stop runs the done branch, which deletes and lets the bell ring once.
+    """
+    write_session({
+        'iteration': state['iteration'],
+        'prompt': state['prompt'],
+        'started': state.get('started'),
+        'done': True,
+    })
+    print(json.dumps({"decision": "block", "reason": reason}))
+
+
 def stop_hook(state, event):
     """Handle a stop hook for the active persist session."""
+    # Final teardown stop: the summary turn just finished. Delete first thing
+    # so the bell guard's delayed `active` read reliably sees no session and
+    # rings exactly once.
+    if state.get('done'):
+        delete_session()
+        return
+
     prompt = state['prompt']
     iteration = state['iteration'] + 1
     lock = state.get('lock')
@@ -188,18 +222,10 @@ def stop_hook(state, event):
     expired = is_expired({**state, 'iteration': iteration})
 
     if not lock and keyword == 'REVIEW_OKAY':
-        delete_session()
-        print(json.dumps({
-            "decision": "block",
-            "reason": "Session complete (verified). Summarize what you accomplished.",
-        }))
+        _finish(state, "Session complete (verified). Summarize what you accomplished.")
     elif expired:
-        delete_session()
         reason = 'time limit reached' if expired == 'deadline' else 'iterations exhausted'
-        print(json.dumps({
-            "decision": "block",
-            "reason": f"Session complete ({reason}). Summarize what you accomplished.",
-        }))
+        _finish(state, f"Session complete ({reason}). Summarize what you accomplished.")
     elif not lock and keyword == 'TASK_COMPLETE':
         write_session(_next_state(state, iteration))
         print(json.dumps({

@@ -31,13 +31,15 @@ An active session is marked by the file `.claude/persist.json` in the project, c
 
 `persist status` prints a human-readable summary and always exits 0, where "No active session." is itself a successful result. `persist active` is the machine-readable predicate: it prints nothing and exits 0 when a live session is running, 1 when there is definitely no live session, and 2 when the state cannot be determined (for example a corrupt state file). A session past its limit but not yet cleaned up counts as no live session (exit 1). External tooling guards on this with a fail-safe rule: act only on a definite exit 1. A Stop-hook bell, for instance, rings on exit 1 but stays silent both during a live loop (0) and when liveness is unknown (2), so a broken or absent predicate never causes spurious rings.
 
+The session stays live through its entire wind-down. When work finishes or a limit is reached, persist runs one final turn that asks for a summary of what was accomplished, and only then ends. `persist active` reports the session as live across that wind-down, including the verification and summary turns, so a Stop-hook bell stays silent throughout and rings exactly once, after the summary, at the true end of the session.
+
 ## Termination
 
-A session ends when any of these conditions is met:
+A session winds down to a final summary turn, then ends, when any of these conditions is met:
 
 - **Iteration limit** reached
 - **Deadline** reached
-- **Task completion**: Claude outputs TASK_COMPLETE or REVIEW_OKAY
+- **Task completion**: Claude outputs TASK_COMPLETE, then confirms with REVIEW_OKAY after the verification turn
 
 With `--lock`, task completion keywords are ignored. The session runs until its iteration or deadline limit. If the agent attempts to use a completion keyword anyway, the prompt explicitly tells it this is a locked session and it cannot exit.
 
