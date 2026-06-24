@@ -1,0 +1,14 @@
+#!/usr/bin/env python3
+# Runnable entry point for a build-free install (a plugin-marketplace clone):
+# run the in-repo persist package with the system python3, so the loop hook's
+# ${CLAUDE_PLUGIN_ROOT}/bin/persist resolves without a build step. The Nix
+# build does not use this file; buildPythonApplication provides its own
+# bin/persist wrapper and rewrites the hook to call persist from PATH.
+import os
+import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
+
+from persist import main
+
+main()
